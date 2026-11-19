@@ -860,7 +860,8 @@
     } catch {} finally { u.busy = false; }
   }
   const upChains = () => state.chain === 'all' ? Object.values(DATA.chains) : [DATA.chains[state.chain]].filter(Boolean);
-  function tickUptime() { upChains().forEach(syncUptime); }
+  // Signing blocks are supplied by the server snapshot (15-minute refresh).
+  function tickUptime() { upChains().forEach(c => { if (up[c.id]) drawUptime(c); }); }
   function renderUptime() {
     const box = $('uptime'), list = upChains();
     if (!list.length) { box.innerHTML = `<p class="empty">${DATA.loading ? 'Loading…' : 'Couldn’t reach the networks. Retrying…'}</p>`; return; }
@@ -932,9 +933,8 @@
   };
 
   /* ── Data ────────────────────────────────────────────────
-     Normal: read data/snapshot.json, written every 15 min by the snapshot job (scripts/snapshot.mjs). Every
-     visitor gets the same file and nobody calls the chain APIs. Fallback, when there is no snapshot (local
-     development, or before the first job has run): read the chains directly with the same data.js. */
+     Every visitor reads only data/snapshot.json, published every 15 minutes from
+     the complete dataset collected on our server. No browser-side Cosmos polling. */
   const D = window.CyberneticsData, ORDER = window.CYBERNETICS.chains.map(c => c.id);
   const known = new Set();
   let history = {}, snapshotAt = '', redraw = 0;
@@ -967,6 +967,14 @@
     snapshotAt = snap.generatedAt;
     history = snap.history || {};
     DATA.uptime = snap.uptime || {};
+    for (const [id, item] of Object.entries(snap.uptimeBlocks || {})) {
+      const u = up[id] ??= {blocks:new Map(),latest:0,stats:null,busy:false};
+      if (item?.latest > 0) {
+        u.latest = item.latest;
+        u.blocks = new Map(Object.entries(item.blocks || {}).map(([height,signed])=>[Number(height),!!signed]));
+      }
+      if (DATA.uptime[id]) u.stats=DATA.uptime[id];
+    }
     Object.values(snap.chains).forEach(addChain);
     addEvents(snap.events);
     dataChanged();
@@ -976,19 +984,16 @@
     DATA.syncing = true; render();
     try { applySnapshot(await readSnapshot()); }
     catch {
-      console.warn('[cybernetics] no data/snapshot.json: reading the chains directly');
-      await D.load({
-        onChain: c => { addChain(c); dataChanged(); },
-        onEvents: (c, list) => { addEvents(list); dataChanged(); },
-        onFail: id => { DATA.failed.push(id); }
-      });
+      // The server is our only automatic upstream data collector.
+      // A missing snapshot is retried, never replaced by direct browser API calls.
+      console.warn('[cybernetics] no data/snapshot.json: retrying static snapshot');
     }
     DATA.syncing = false; DATA.loading = false;
     document.body.classList.remove('loading');
     if (!Object.keys(DATA.chains).length) { render(); setTimeout(boot, 30000); return; }
     if (state.chain !== 'all' && !DATA.chains[state.chain]) state.chain = 'all';
     dataChanged();
-    setInterval(() => { if (state.view === 'uptime' && !document.hidden) tickUptime(); }, 6000);
+    // Uptime refreshes with the static snapshot, not by polling chain RPC.
     setInterval(() => { if (!document.hidden) readSnapshot().then(applySnapshot).catch(() => {}); }, 5 * 60e3);
   }
   /* ───────────────────────────────────────────────────────── */

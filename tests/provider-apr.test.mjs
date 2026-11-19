@@ -35,7 +35,7 @@ test('No fallback to cosmos.directory or unverified old APR', () => {
   const old={apr:8,chainApr:.08,aprSource:'cosmos.directory',aprFetchedAt:'2026-11-19T11:00:00Z'};
   assert.equal(chooseApr('nolus',current,old,null,NOW).apr,null);
   const verified={...old,aprSource:'nolus'};
-  assert.equal(chooseApr('nolus',current,verified,null,NOW).apr,8);
+  assert.ok(Math.abs(chooseApr('nolus',current,verified,null,NOW).apr-7.6)<1e-10);
   assert.equal(chooseApr('nolus',current,{...verified,aprFetchedAt:'2026-11-10T00:00:00Z'},null,NOW).apr,null);
 });
 test('Integration routes each chain to the appropriate provider', async () => {

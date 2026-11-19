@@ -134,7 +134,7 @@ for (const id of fresh) {
 }
 
 /* Keplr APR scraper: prefer the displayed rate from our public Playwright service.
-   It is already a displayed staking APR; do not deduct commission again.
+   It is a chain-level APR, not a validator-specific net APR. Adjust for commission.
    The old external providers remain as fallback until the service is online. */
 const collectorUrl = process.env.APR_COLLECTOR_URL ||
   (process.env.API_BASE ? '' : 'https://tonyler.is-not-a.dev/scraper/api');
@@ -144,13 +144,14 @@ if (collectorUrl) {
     for (const [id, value] of Object.entries(remote)) {
       if (!value || !chains[id]) continue;
       const c = chains[id];
-      c.apr = value.netApr; // exactly the percent shown by Keplr
-      c.chainApr = c.commission < 1 ? value.netApr / 100 / (1 - c.commission) : null;
+      // Keplr chain APR is a network rate; delegators earn after validator commission.
+      c.chainApr = value.netApr / 100;
+      c.apr = value.netApr * (1 - c.commission);
       c.aprSource = value.source;
       c.aprAsOf = value.asOf;
       c.aprFetchedAt = new Date().toISOString();
       c.aprError = null;
-      console.log(`  ${id}: APR ${c.apr.toFixed(2)}% (Keplr Dashboard)`);
+      console.log(`  ${id}: APR ${c.apr.toFixed(2)}% (after commission; ${value.source})`);
     }
   } catch (err) {
     console.warn('  Keplr APR collector unavailable: ' + err.message);
@@ -159,7 +160,15 @@ if (collectorUrl) {
 
 // Today's stake, per network (prices per day come from CoinGecko above).
 history[today] = { ...(history[today] || {}) };
-for (const id of fresh) history[today][id] = { ...(history[today][id] || {}), tokens: chains[id].tokens, price: chains[id].price };
+for (const id of fresh) {
+  const c = chains[id], saved = { ...(history[today][id] || {}), tokens: c.tokens, price: c.price };
+  // Record the provider APR for this date. Never backfill older days with today's APR.
+  if (Number.isFinite(c.chainApr) && c.chainApr >= 0) {
+    saved.chainApr = c.chainApr;
+    saved.aprSource = c.aprSource || 'cosmos.directory';
+  }
+  history[today][id] = saved;
+}
 for (const d of Object.keys(history)) if (Date.now() - Date.parse(d) > HISTORY_DAYS * 864e5) delete history[d];
 
 const keepFrom = Date.now() - (days + 7) * 864e5;

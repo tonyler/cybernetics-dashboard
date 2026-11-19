@@ -908,10 +908,24 @@
   }
   // Last good data is kept in the browser, so a return visit paints instantly and then refreshes.
   const D = window.CyberneticsData, CACHE = 'cyb.cache.v1', ORDER = window.CYBERNETICS.chains.map(c => c.id);
-  const saveCache = () => { try {
-    localStorage.setItem(CACHE, JSON.stringify({ at: Date.now(), chains: DATA.chains, events: DATA.events.slice(0, 3000) },
-      (k, v) => ['names', 'hexAddress', 'valcons', 'legacySearch'].includes(k) ? undefined : v));
-  } catch {} };
+  // coverage[chainId] = { complete, newest }: history for that network is complete back to the window start,
+  // so the next visit only needs transactions newer than `newest`.
+  let coverage = {};
+  const fetchedNow = new Set();
+  const saveCache = () => {
+    const keepFrom = Date.now() - ((window.CYBERNETICS.history?.days ?? 90) + 7) * 864e5;
+    const cov = {};
+    for (const id of Object.keys(DATA.chains)) {
+      if (fetchedNow.has(id)) cov[id] = { complete: true, newest: DATA.events.find(e => e.chain === id && e.type !== 'unbonded')?.date };
+      else if (coverage[id]) cov[id] = coverage[id];
+    }
+    let events = DATA.events.filter(e => Date.parse(e.date) >= keepFrom).slice(0, 15000);
+    const skip = ['names', 'hexAddress', 'valcons', 'legacySearch', 'peer'];
+    for (let tries = 0; tries < 4; tries++) {
+      try { localStorage.setItem(CACHE, JSON.stringify({ at: Date.now(), coverage: cov, chains: DATA.chains, events }, (k, v) => skip.includes(k) ? undefined : v)); return; }
+      catch { events = events.slice(0, events.length >> 1); }      // storage full: keep the newest half
+    }
+  };
   const readCache = () => { try { const c = JSON.parse(localStorage.getItem(CACHE)); return c && Date.now() - c.at < 7 * 864e5 ? c : null; } catch { return null; } };
   let redraw = 0;
   function dataChanged() {
@@ -936,6 +950,7 @@
   async function boot() {
     const cached = readCache();
     if (cached) {
+      coverage = cached.coverage || {};
       Object.values(cached.chains).forEach(addChain);
       addEvents(cached.events);
       DATA.daily = D.buildDaily(DATA.chains, DATA.events);
@@ -945,8 +960,9 @@
     document.body.classList.add('loading');
     render();
     await D.load({
+      since: coverage,
       onChain: c => { addChain(c); dataChanged(); },
-      onEvents: (c, list) => { addEvents(list); dataChanged(); },
+      onEvents: (c, list, complete) => { addEvents(list); if (complete) fetchedNow.add(c.id); dataChanged(); },
       onFail: id => { DATA.failed.push(id); }
     });
     DATA.syncing = false; DATA.loading = false;

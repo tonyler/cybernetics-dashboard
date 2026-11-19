@@ -47,13 +47,15 @@ where the validator can't be found is hidden automatically.
 ### Loading
 
 Each network appears as soon as its stake/APR/price arrive (two small requests). Transactions stream in
-afterwards, newest page first, then the rest of the history. The last result is kept in `localStorage`
-(`cyb.cache.v1`, up to 7 days old), so a return visit paints instantly and refreshes in the background.
+afterwards: the newest page first, then older pages until `history.days` (90) back. The result is kept in
+`localStorage` (`cyb.cache.v1`) with how far back each network is complete, so a return visit paints instantly
+and only fetches transactions newer than what it already has.
 
 ### Known limits
 
-- **History depth** is whatever public nodes keep indexed: up to `history.pages × 100` transactions per event
-  type (set in `config.js`). For full multi-year history, point `data.js` at an indexer.
+- **History depth**: 90 days by default (`history.days`), capped at `history.maxPages × 100` transactions per
+  event type, and limited by what public nodes keep indexed (some prune old transactions). For multi-year
+  history, point `data.js` at an indexer.
 - **Past values** are rebuilt from today's stake minus later flows, valued at **today's** price. Slashing isn't modelled.
 - Public endpoints come and go. If a network fails to load it's left out and logged in the console as `[cybernetics]`.
 

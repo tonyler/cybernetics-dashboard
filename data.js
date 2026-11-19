@@ -16,7 +16,7 @@
   Notes
     - Daily history is rebuilt from current stake minus later net flows, valued at today's price.
     - Rewards per day = stake × chain APR / 365, split by commission (operator) and the rest (stakers).
-    - History depth is limited by what public nodes keep indexed (config.history.pages × 100 txs per type).
+    - History goes back config.history.days (default 90), limited by what public nodes keep indexed.
 */
 (() => {
   'use strict';
@@ -74,21 +74,29 @@
   const gasString = (price, denom) => (+price).toFixed(12).replace(/\.?0+$/, '') + denom;
 
   /* ── Transaction search (SDK ≥0.50 uses `query`, older nodes `events`) ── */
-  async function search(chain, query, pages, start = 1) {
+  // Pages newest → oldest. Stops at the end of results, at a tx older than `stopBefore`, or after `maxPages`.
+  // complete = nothing older is needed (or exists); false = stopped early (page cap or a node error mid-way).
+  async function search(chain, query, { start = 1, maxPages = 1, stopBefore = 0 } = {}) {
     const base = `${API.rest}${chain.registry}/cosmos/tx/v1beta1/txs?order_by=ORDER_BY_DESC&`;
-    const q = encodeURIComponent(query), out = [];
-    for (let page = start; page <= pages; page++) {
+    const q = encodeURIComponent(query), txs = [];
+    for (let page = start; page < start + maxPages; page++) {
       let res;
-      if (chain.legacySearch !== true) {
-        try { res = await get(`${base}query=${q}&page=${page}&limit=${LIMIT}`); chain.legacySearch = false; }
-        catch (err) { if (chain.legacySearch === false) throw err; chain.legacySearch = true; }
+      try {
+        if (chain.legacySearch !== true) {
+          try { res = await get(`${base}query=${q}&page=${page}&limit=${LIMIT}`); chain.legacySearch = false; }
+          catch (err) { if (chain.legacySearch === false) throw err; chain.legacySearch = true; }
+        }
+        if (chain.legacySearch) res = await get(`${base}events=${q}&pagination.offset=${(page - 1) * LIMIT}&pagination.limit=${LIMIT}`);
+      } catch (err) {
+        if (page === start) throw err;
+        return { txs, complete: false };          // keep what we have; a later visit continues
       }
-      if (chain.legacySearch) res = await get(`${base}events=${q}&pagination.offset=${(page - 1) * LIMIT}&pagination.limit=${LIMIT}`);
-      const txs = res.tx_responses || [];
-      out.push(...txs);
-      if (txs.length < LIMIT) break;
+      const batch = res.tx_responses || [];
+      txs.push(...batch);
+      if (batch.length < LIMIT) return { txs, complete: true };
+      if (stopBefore && Date.parse(batch.at(-1).timestamp) < stopBefore) return { txs, complete: true };
     }
-    return out;
+    return { txs, complete: false };
   }
 
   // Events of a tx with plain attributes (older nodes base64-encode tx-level events).
@@ -113,14 +121,19 @@
     return 'Voted ' + name;
   }
 
-  async function chainEvents(c, pages, start = 1) {
-    const [del, unb, rin, rout, own] = await Promise.all([
-      search(c, `delegate.validator='${c.valoper}'`, pages, start),
-      search(c, `unbond.validator='${c.valoper}'`, pages, start),
-      search(c, `redelegate.destination_validator='${c.valoper}'`, pages, start),
-      search(c, `redelegate.source_validator='${c.valoper}'`, pages, start),
-      search(c, `message.sender='${c.account}'`, 1, start)
-    ].map(p => p.catch(() => [])));
+  // The five searches behind a validator's activity. `done` remembers which have reached far enough back.
+  async function chainEvents(c, { start = 1, maxPages = 1, stopBefore = 0, done = {} } = {}) {
+    const queries = {
+      del: `delegate.validator='${c.valoper}'`, unb: `unbond.validator='${c.valoper}'`,
+      rin: `redelegate.destination_validator='${c.valoper}'`, rout: `redelegate.source_validator='${c.valoper}'`,
+      own: `message.sender='${c.account}'`
+    };
+    const results = await Promise.all(Object.entries(queries).map(async ([k, q]) => {
+      if (done[k]) return [];
+      try { const r = await search(c, q, { start, maxPages, stopBefore }); if (r.complete) done[k] = true; return r.txs; }
+      catch { return []; }
+    }));
+    const [del, unb, rin, rout, own] = results;
     const out = new Map();
     const amountOf = a => baseUnits(a.amount) / 10 ** c.decimals;
     const add = (tx, i, ev) => {
@@ -148,7 +161,9 @@
       });
     });
     scan(del); scan(unb); scan(rin); scan(rout); scan(own, true);
-    return [...out.values()];
+    const events = [...out.values()];
+    events.complete = Object.keys(queries).every(k => done[k]);
+    return events;
   }
 
   // Every validator's name on a chain, in one paginated request (all bond statuses), cached.
@@ -257,29 +272,35 @@
   }
 
   /* Streams results so the page fills in as soon as anything is known:
-       onChain(chain)          stake, APR, price… (fast: two small requests)
-       onEvents(chain, events) newest transactions first, then the rest of the history
-       onFail(chainId, error)  network left out */
-  async function load({ onChain, onEvents, onFail } = {}) {
-    const pages = CFG.history?.pages ?? 3;
+       onChain(chain)                    stake, APR, price… (fast: two small requests)
+       onEvents(chain, events, complete) newest page first, then older pages in chunks until `history.days` back
+       onFail(chainId, error)            network left out
+     since[chainId] = { newest, complete } from a previous visit: if that history was complete, only newer
+     transactions are fetched. */
+  async function load({ onChain, onEvents, onFail, since = {} } = {}) {
+    const days = CFG.history?.days ?? 90, cap = CFG.history?.maxPages ?? 40, CHUNK = 4;
     await Promise.all(CFG.chains.map(async cfg => {
       let info;
       try { info = await chainInfo(cfg); onChain?.(info.chain); }
       catch (err) { console.warn('[cybernetics]', cfg.id, err); onFail?.(cfg.id, err); return; }
-      const c = info.chain;
-      for (const [start, end] of pages > 1 ? [[1, 1], [2, pages]] : [[1, 1]]) {
-        try {
-          const events = await chainEvents(c, end, start);
-          await nameRedelegationPeers(c, events, info.monikers);
-          onEvents?.(c, [...events, ...completedUnbondings(c, events)]);
-        } catch (err) { console.warn('[cybernetics]', cfg.id, 'history', err); }
-      }
+      const c = info.chain, prev = since[cfg.id];
+      const stopBefore = prev?.complete && prev.newest ? Date.parse(prev.newest) : Date.now() - days * DAY;
+      const done = {};
+      const emit = async events => {
+        await nameRedelegationPeers(c, events, info.monikers);
+        onEvents?.(c, [...events, ...completedUnbondings(c, events)], events.complete);
+      };
+      try {
+        await emit(await chainEvents(c, { start: 1, maxPages: 1, stopBefore, done }));
+        for (let start = 2; start <= cap && Object.keys(done).length < 5; start += CHUNK)
+          await emit(await chainEvents(c, { start, maxPages: CHUNK, stopBefore, done }));
+      } catch (err) { console.warn('[cybernetics]', cfg.id, 'history', err); }
     }));
   }
 
   // Newest events for one chain (first page only), for live updates.
   async function recent(c) {
-    const events = await chainEvents(c, 1);
+    const events = await chainEvents(c, { maxPages: 1 });
     await nameRedelegationPeers(c, events, null);
     return events;
   }

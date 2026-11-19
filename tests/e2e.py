@@ -85,3 +85,24 @@ async def speed():
         print(f'cache: offline return visit shows {rows} rows within 0.6s', 'OK' if rows else 'FAIL')
         await b.close()
 asyncio.run(speed())
+
+
+async def history():
+    """Pages back until ~90 days are covered; a return visit only fetches what's new."""
+    async with async_playwright() as p:
+        b = await p.chromium.launch(); ctx = await b.new_context(); pg = await ctx.new_page()
+        await pg.route('**/*', lambda r: mock.handle(r) if not r.request.url.startswith('file:') else r.continue_())
+        mock.search_calls.clear()
+        await pg.goto(URL); await pg.wait_for_function("!document.body.classList.contains('loading')", timeout=60000); await pg.wait_for_timeout(500)
+        oldest = await pg.evaluate("(Date.now() - Date.parse(cybernetics.data.events.filter(e => e.chain === 'cosmos').at(-1).date)) / 864e5")
+        days_with_flow = await pg.evaluate("cybernetics.data.daily.filter(d => d.flows.cosmos).length")
+        pages = max(pg_ for n, k, pg_ in mock.search_calls if n == 'cosmoshub' and k == 'delegate.validator')
+        print(f'history: oldest Cosmos event {oldest:.0f} days ago, {days_with_flow} of 90 days have flows, {pages} pages fetched',
+              'OK' if oldest >= 89 and days_with_flow >= 85 else 'FAIL')
+        mock.search_calls.clear()
+        await pg.reload(); await pg.wait_for_function("!document.body.classList.contains('loading')", timeout=60000)
+        again = [c for c in mock.search_calls if c[0] == 'cosmoshub' and c[1] == 'delegate.validator']
+        days2 = await pg.evaluate("cybernetics.data.daily.filter(d => d.flows.cosmos).length")
+        print(f'return visit: {len(again)} Cosmos delegation page(s) fetched, history still {days2} days', 'OK' if len(again) <= 2 and days2 >= 85 else 'FAIL')
+        await b.close()
+asyncio.run(history())

@@ -80,9 +80,12 @@ JUNO_TX={
  "delegate.validator='%s'"%JUNO_VAL:[tx('J1',6*3600,[ev('delegate',{'validator':JUNO_VAL,'amount':'4600000000ujuno'},True)],'new')],
  "message.sender='%s'"%JA:[tx('J2',10*3600,[ev('proposal_vote',{'option':'VOTE_OPTION_NO_WITH_VETO','proposal_id':'374','voter':JA},True)],'new')],
 }
+DEEP=[tx('H%d'%i, 2*D+i*7200, [ev('delegate',{'validator':COSMOS_VAL,'amount':'%d000000uatom'%(50+i%40)})],'new') for i in range(1200)]
+COSMOS_TX["delegate.validator='%s'"%COSMOS_VAL]=COSMOS_TX["delegate.validator='%s'"%COSMOS_VAL]+DEEP
 TXS={'cosmoshub':COSMOS_TX,'osmosis':OSMO_TX,'juno':JUNO_TX,'dymension':{}}
 LEGACY={'osmosis'}
 calls=[]
+search_calls=[]
 HEIGHT0=33947379
 def consensus_key(valoper): return base64.b64encode(hashlib.sha256(valoper.encode()).digest()).decode()   # stable fake ed25519 key
 def hex_addr(valoper): return hashlib.sha256(base64.b64decode(consensus_key(valoper))).hexdigest()[:40].upper()
@@ -130,7 +133,11 @@ def handle(route):
             else:
                 if n not in LEGACY: return ok({'code':3,'message':'query cannot be empty'},400)
                 q=qs['events'][0]
-            return ok({'txs':[],'tx_responses':TXS.get(n,{}).get(q,[]),'total':'0'})
+            allt=TXS.get(n,{}).get(q,[])
+            if 'query' in qs: page=int(qs.get('page',['1'])[0]); lim=int(qs.get('limit',['100'])[0]); off=(page-1)*lim
+            else: off=int(qs.get('pagination.offset',['0'])[0]); lim=int(qs.get('pagination.limit',['100'])[0])
+            search_calls.append((n, q.split('=')[0], off//lim+1))
+            return ok({'txs':[],'tx_responses':allt[off:off+lim],'total':str(len(allt))})
         if rest=='/cosmos/base/tendermint/v1beta1/blocks/latest':
             return ok({'sdk_block':{'header':{'height':str(23481902+int(time.time()-now)//6)}}})
         # wallet endpoints

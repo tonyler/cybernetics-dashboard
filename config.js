@@ -15,7 +15,7 @@ window.CYBERNETICS = {
   identity: 'AB3DA9B8891D4F85',
   moniker: 'The_Cybernetics',
   memo: 'Staked with The Cybernetics',
-  history: { days: 90, pages: 3 },           // up to pages × 100 transactions per event type
+  history: { days: 90, maxPages: 40 },      // fetch back this many days (≤ maxPages × 100 txs per event type)
   chains: [
     { id: 'cosmos',    registry: 'cosmoshub', name: 'Cosmos Hub', icon: 'assets/chains/cosmos.webp',    keplr: 'cosmos-hub', mintscan: 'cosmos',
       valoper: 'cosmosvaloper18m9wncg0w74vusm4xu0mk6ha2lpdrqq7c9cjq3' },

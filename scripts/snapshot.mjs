@@ -146,7 +146,7 @@ if (collectorUrl) {
       const c = chains[id];
       c.apr = value.netApr; // exactly the percent shown by Keplr
       c.chainApr = c.commission < 1 ? value.netApr / 100 / (1 - c.commission) : null;
-      c.aprSource = 'keplr-dashboard';
+      c.aprSource = value.source;
       c.aprAsOf = value.asOf;
       c.aprFetchedAt = new Date().toISOString();
       c.aprError = null;

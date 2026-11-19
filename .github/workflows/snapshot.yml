@@ -32,7 +32,7 @@ jobs:
       # APR scraping, prices, transactions and uptime run on our server.
       - name: Test snapshot validation
         run: node --test tests/collector-data.test.mjs tests/rewards.test.mjs tests/download-snapshot.test.mjs
-      - name: Download complete snapshot from private collector
+      - name: Download complete snapshot from self-hosted collector
         run: node scripts/download-snapshot.mjs
         env:
           SNAPSHOT_API_URL: https://tonyler.is-not-a.dev/scraper/snapshot

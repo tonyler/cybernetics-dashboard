@@ -1,88 +1,112 @@
-/* External, provider-published staking APRs. No reward sampling or inflation-derived estimates. */
-const MAX_SOURCE_AGE = 3 * 86400e3;
-const MAX_CACHED_AGE = 3 * 86400e3;
+/* External published staking APRs only. No APR extrapolation from inflation or rewards. */
+const DAY = 86400000;
+const MAX_SOURCE_AGE = 7 * DAY;
+const MAX_CACHED_AGE = 3 * DAY;
 
-const finiteRate = value => {
-  if (value === null || value === undefined || value === '' || typeof value === 'boolean') throw new Error('missing APR');
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0 || n > 1000) throw new Error('invalid APR');
+const positivePercent = v => {
+  if (v === null || v === undefined || v === '' || typeof v === 'boolean') throw Error('missing staking APR');
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0 || n > 1000) throw Error('missing or invalid positive staking APR');
   return n;
 };
 
+// Numia publishes each daily staking APR under OSMO and total; its own
+// osmoscope integration gives priority to OSMO when both are present.
+// Skip a zero-only reading: it must not overwrite a verified fee-funded APR.
 export function numiaApr(rows, now = Date.now()) {
-  if (!Array.isArray(rows)) throw new Error('Numia APR must be an array');
-  // Numia provides individual assets and a total. Use only the total OSMO staking APR,
-  // which includes fee-funded rewards; never add components or select inflation alone.
-  const candidates = rows.filter(r => r && (r.symbol === 'total' || r.symbol === 'OSMO'))
-    .map(r => ({ date: String(r.labels || '').slice(0, 10), symbol: r.symbol, apr: r.apr }))
-    .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r.date) && Number.isFinite(Date.parse(r.date)));
-  const totals = candidates.filter(r => r.symbol === 'total');
-  (totals.length ? totals : candidates).sort((a, b) => b.date.localeCompare(a.date));
-  const latest = (totals.length ? totals : candidates)[0];
-  if (!latest) throw new Error('Numia has no OSMO total APR');
-  // A daily APR is dated to its observation day; allow Numia's next-day publication delay.
-  const t = Date.parse(latest.date);
-  if (t > now + 86400e3 || now - t > MAX_SOURCE_AGE) throw new Error('Numia APR is stale');
-  return { grossApr: finiteRate(latest.apr), asOf: latest.date, source: 'numia' };
+  if (!Array.isArray(rows)) throw Error('Numia APR must be an array');
+  const dates = new Map();
+  for (const r of rows) {
+    if (r?.symbol !== 'OSMO' && r?.symbol !== 'total') continue;
+    const date = String(r.labels || '').slice(0, 10);
+    const time = Date.parse(date + 'T00:00:00Z');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(time) ||
+        time > now + DAY || now - time > MAX_SOURCE_AGE) continue;
+    const val = Number(r.apr);
+    if (!Number.isFinite(val) || val <= 0 || val > 1000) continue;
+    if (r.symbol === 'OSMO' || !dates.has(date)) dates.set(date, {grossApr:val, source:'numia', asOf:date});
+  }
+  const date = [...dates.keys()].sort().at(-1);
+  if (!date) throw Error('Numia returned no recent positive OSMO staking APR');
+  return dates.get(date);
 }
 
+// Nolus official governance API: accept a direct APR, in fraction or percent
+// units. Do not accidentally read a separate inflation or lending APR.
 export function nolusApr(payload) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid Nolus response');
-  // The official app provides an APR, not an APY or the separate annual inflation field.
-  const raw = finiteRate(payload.apr);
-  // APIs commonly expose APR as a fraction (0.08) or percent (8).
-  // A fractional rate converts to a display percentage; no yield is estimated locally.
-  const grossApr = raw <= 1 ? raw * 100 : raw;
-  return { grossApr, source: 'nolus' };
+  const value = payload?.apr ?? payload?.stakingApr ?? payload?.staking_apr;
+  const n = positivePercent(value);
+  return {grossApr: n <= 1 ? n * 100 : n, source:'nolus'};
 }
 
-async function json(url, { fetchFn, headers = {} }) {
+// Public third-party Nolus staking explorer reports distribution-derived APR,
+// not inflation-derived APR. Only used when the official app API fails.
+export function nolusExplorerApr(html) {
+  if (typeof html !== 'string') throw Error('invalid explorer HTML');
+  const start = html.search(/Nolus staking APR/i);
+  if (start < 0) throw Error('explorer missing Nolus staking APR heading');
+  const section = html.slice(start, start + 1800)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const found = section.match(/\bAPR\s+(\d+(?:\.\d+)?)\s*%/i);
+  if (!found) throw Error('explorer has no explicit staking APR');
+  return {grossApr: positivePercent(found[1]), source:'staking-explorer'};
+}
+
+async function request(url, {fetchFn, format='json', headers={}}) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 10000);
+  const timer = setTimeout(() => ctl.abort(), 12000);
   try {
-    const res = await fetchFn(url, { signal: ctl.signal, headers: { Accept: 'application/json', ...headers } });
-    if (!res.ok) throw new Error('APR API HTTP ' + res.status);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
+    const r = await fetchFn(url, {signal:ctl.signal, headers:{Accept:format==='json'?'application/json':'text/html',...headers}});
+    if (!r.ok) throw Error('HTTP '+r.status+' from '+new URL(url).host);
+    return format==='json' ? r.json() : r.text();
+  } finally { clearTimeout(timer); }
 }
 
-export async function externalApr(id, { fetchFn = fetch, now = Date.now(), base = '', numiaKey = '' } = {}) {
-  if (id === 'osmosis') {
-    const end = new Date(now).toISOString().slice(0, 10);
-    const start = new Date(now - 7 * 86400e3).toISOString().slice(0, 10);
-    const url = (base ? base + '/numia/apr' : 'https://public-osmosis-api.numia.xyz/apr')
-      + '?start_date=' + start + '&end_date=' + end;
-    return numiaApr(await json(url, { fetchFn, headers: numiaKey ? { Authorization: 'Bearer ' + numiaKey } : {} }), now);
+export async function externalApr(id, {fetchFn=fetch, now=Date.now(), base='', numiaKey=''}={}) {
+  if (id==='osmosis') {
+    const end = new Date(now).toISOString().slice(0,10);
+    const start = new Date(now-14*DAY).toISOString().slice(0,10);
+    const url = (base?base+'/numia/apr':'https://public-osmosis-api.numia.xyz/apr')
+      +'?start_date='+start+'&end_date='+end;
+    return numiaApr(await request(url,{fetchFn,headers:numiaKey?{Authorization:'Bearer '+numiaKey}:{}}),now);
   }
-  if (id === 'nolus') {
-    const url = base ? base + '/nolus/api/governance/apr' : 'https://app.nolus.io/api/governance/apr';
-    return nolusApr(await json(url, { fetchFn }));
+  if (id==='nolus') {
+    const url = base?base+'/nolus/api/governance/apr':'https://app.nolus.io/api/governance/apr';
+    try {
+      return nolusApr(await request(url,{fetchFn}));
+    } catch (primaryError) {
+      const fallback = base?base+'/staking-explorer/nolus':'https://staking-explorer.com/explorer/nolus';
+      try { return nolusExplorerApr(await request(fallback,{fetchFn,format:'text'})); }
+      catch (secondaryError) {
+        throw Error('Nolus official: '+primaryError.message+'; staking explorer: '+secondaryError.message);
+      }
+    }
   }
-  throw new Error('unsupported external APR network: ' + id);
+  throw Error('unsupported external APR network: '+id);
 }
 
-export function chooseApr(id, current, previous, reading, now = Date.now()) {
-  if (!['osmosis', 'nolus'].includes(id)) return current;
-  // These networks must NOT fall back to cosmos.directory's inflation-based APR.
-  const c = { ...current, apr: null, chainApr: null, aprSource: id === 'osmosis' ? 'numia' : 'nolus',
-    aprFetchedAt: null, aprAsOf: null };
-  if (reading) {
-    c.chainApr = reading.grossApr / 100;
-    c.apr = reading.grossApr * (1 - c.commission);
-    c.aprFetchedAt = new Date(now).toISOString();
-    c.aprAsOf = reading.asOf || c.aprFetchedAt;
+export function chooseApr(id,current,previous,reading,now=Date.now()) {
+  if (!['osmosis','nolus'].includes(id)) return current;
+  const expected = id==='osmosis'?['numia']:['nolus','staking-explorer'];
+  const c={...current,apr:null,chainApr:null,aprSource:null,aprFetchedAt:null,aprAsOf:null};
+  if (reading && expected.includes(reading.source) && Number.isFinite(reading.grossApr) && reading.grossApr>0) {
+    c.chainApr=reading.grossApr/100;
+    c.apr=reading.grossApr*(1-c.commission);
+    c.aprSource=reading.source;
+    c.aprFetchedAt=new Date(now).toISOString();
+    c.aprAsOf=reading.asOf||c.aprFetchedAt;
     return c;
   }
-  // Carry forward only an APR previously fetched from the same external provider.
-  const age = now - Date.parse(previous?.aprFetchedAt || '');
-  if (previous?.aprSource === c.aprSource && Number.isFinite(age) && age >= 0 && age < MAX_CACHED_AGE &&
-      Number.isFinite(previous.apr) && Number.isFinite(previous.chainApr)) {
-    c.chainApr = previous.chainApr;
-    c.apr = previous.chainApr * 100 * (1 - c.commission);
-    c.aprFetchedAt = previous.aprFetchedAt;
-    c.aprAsOf = previous.aprAsOf || previous.aprFetchedAt;
+  const age=now-Date.parse(previous?.aprFetchedAt||'');
+  if (expected.includes(previous?.aprSource) && Number.isFinite(age) && age>=0 &&
+      age<MAX_CACHED_AGE && Number.isFinite(previous.chainApr) && previous.chainApr>0) {
+    c.chainApr=previous.chainApr;
+    c.apr=previous.chainApr*100*(1-c.commission);
+    c.aprSource=previous.aprSource;
+    c.aprFetchedAt=previous.aprFetchedAt;
+    c.aprAsOf=previous.aprAsOf||previous.aprFetchedAt;
   }
   return c;
 }

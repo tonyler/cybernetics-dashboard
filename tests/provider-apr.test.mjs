@@ -43,6 +43,16 @@ test('Nolus falls back when official endpoint returns zero or HTTP error', async
   assert.equal(v.grossApr,4.78);
   assert.equal(v.source,'staking-explorer');
 });
+test('Osmosis uses reward-distribution APR when Numia has no usable APR', async () => {
+  const fetchFn=async url=>url.includes('/numia/apr')
+    ? {ok:true,json:async()=>[{symbol:'OSMO',labels:'2026-11-18',apr:0}]}
+    : {ok:true,text:async()=>'<h4>Osmosis staking APR</h4><h3>APR 5.32%</h3>'};
+  const v=await externalApr('osmosis',{fetchFn,now:NOW,base:'http://mock'});
+  assert.equal(v.grossApr,5.32);
+  assert.equal(v.source,'staking-explorer');
+  const c=chooseApr('osmosis',{commission:0.05,apr:0,chainApr:0},null,v,NOW);
+  assert.ok(Math.abs(c.apr-5.054)<1e-9);
+});
 test('External providers replace inflation APR and apply validator commission', () => {
   const prior = {apr:0,chainApr:0,commission:0.05};
   const r = chooseApr('osmosis',prior,null,{grossApr:5.2,source:'numia',asOf:'2026-11-18'},NOW);

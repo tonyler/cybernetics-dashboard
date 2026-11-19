@@ -7,10 +7,13 @@ export function parseRemoteApr(payload, id, now = Date.now()) {
   const item = payload?.networks?.[id];
   if (!Object.hasOwn(KEPLR_PAGES, id) || !item)
     throw Error('No Keplr APR for '+id);
-  if (item.source !== 'keplr-dashboard' ||
-      item.sourceUrl !== 'https://wallet.keplr.app/chains/' + KEPLR_PAGES[id] ||
+  const isKeplr = item.source === 'keplr-dashboard' &&
+    item.sourceUrl === 'https://wallet.keplr.app/chains/' + KEPLR_PAGES[id];
+  const isNolusFallback = id === 'nolus' && item.source === 'staking-explorer' &&
+    item.sourceUrl === 'https://staking-explorer.com/explorer/nolus';
+  if ((!isKeplr && !isNolusFallback) ||
       item.unit !== 'percent' || item.basis !== 'network-staking')
-    throw Error('Unrecognized Keplr APR source for '+id);
+    throw Error('Unrecognized staking APR source for '+id);
   // null is NOT 0: missing Keplr rates must never become 0% via Number(null).
   if (item.apr === null || item.apr === undefined || item.apr === '')
     throw Error('Unavailable Keplr APR for '+id);
@@ -21,7 +24,7 @@ export function parseRemoteApr(payload, id, now = Date.now()) {
     throw Error('Stale Keplr APR for '+id);
   if (!['ok','stale'].includes(item.status))
     throw Error('Keplr APR status invalid for '+id);
-  return {netApr:value, source:'keplr-dashboard', asOf:item.fetchedAt, status:item.status};
+  return {netApr:value, source:item.source, asOf:item.fetchedAt, status:item.status};
 }
 export async function fetchRemoteApr(url,{fetchFn=fetch,now=Date.now()}={}) {
   if (!/^https:\/\//.test(url) &&

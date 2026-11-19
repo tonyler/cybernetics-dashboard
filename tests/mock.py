@@ -19,7 +19,7 @@ def data_of(addr): return [CH.index(c) for c in addr[addr.rfind('1')+1:-6]]
 COSMOS_VAL='cosmosvaloper18m9wncg0w74vusm4xu0mk6ha2lpdrqq7c9cjq3'
 OSMO_VAL='osmovaloper10w06wvmdd4xn7hr76gzrv570f7q5uweem5jcd7'
 DYM_VAL='dymvaloper1x4dhky07zxuaew2ru7tgvtd68vjk3x56w5p5lh'
-JUNO_VAL=bech('junovaloper', data_of(COSMOS_VAL)[::-1])
+JUNO_VAL='junovaloper1yfx5x9cs3nvncprlw0kuw2cgs9qq38uqnwfhd8'
 PEER=bech('cosmosvaloper', [7]*32); PEER2=bech('osmovaloper', [9]*32)
 acct = lambda val, hrp: bech(hrp, data_of(val))
 now=time.time()

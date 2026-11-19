@@ -1,4 +1,4 @@
-# Every 15 minutes: fetch validator data once (scripts/snapshot.mjs) and publish the site with it.
+# Every 15 minutes: download one complete snapshot from our server and deploy the static site.
 # Visitors only read data/snapshot.json, so they never call the chain APIs themselves.
 # Requires Settings → Pages → Source: "GitHub Actions".
 name: Snapshot and deploy
@@ -28,26 +28,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # The previous snapshot lives in the Actions cache, so each run only fetches what's new.
-      - name: Restore previous snapshot
-        uses: actions/cache/restore@v4
-        with:
-          path: data/snapshot.json
-          key: snapshot-${{ github.run_id }}
-          restore-keys: snapshot-
-      - name: Test APR adapters
-        run: node --test tests/provider-apr.test.mjs tests/remote-apr.test.mjs tests/rewards.test.mjs tests/collector-data.test.mjs
-      - name: Snapshot
-        run: node scripts/snapshot.mjs
+      # One read-only fetch of the complete data package. Upstream collection,
+      # APR scraping, prices, transactions and uptime run on our server.
+      - name: Test snapshot validation
+        run: node --test tests/collector-data.test.mjs tests/rewards.test.mjs tests/download-snapshot.test.mjs
+      - name: Download complete snapshot from private collector
+        run: node scripts/download-snapshot.mjs
         env:
-          SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
-          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}   # optional
-          NUMIA_API_KEY: ${{ secrets.NUMIA_API_KEY }}           # optional
-      - name: Save snapshot for the next run
-        uses: actions/cache/save@v4
-        with:
-          path: data/snapshot.json
-          key: snapshot-${{ github.run_id }}
+          SNAPSHOT_API_URL: https://tonyler.is-not-a.dev/scraper/snapshot
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -8,7 +8,7 @@ import http from 'node:http';
 
 test('snapshot downloader uses one own API call and validates full payload',async()=>{
  const today=new Date().toISOString();
- const payload={generatedAt:today,chains:{cosmos:{apr:15}},events:[],history:{},coverage:{},uptime:{}};
+ const payload={generatedAt:today,chains:{cosmos:{apr:15}},events:[],history:{},coverage:{},uptime:{},uptimeBlocks:{cosmos:{latest:100,blocks:{100:true}}}};
  let calls=0;
  const server=http.createServer((req,res)=>{
    calls++;

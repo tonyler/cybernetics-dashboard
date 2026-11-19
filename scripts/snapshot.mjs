@@ -61,6 +61,12 @@ await D.load({
   onFail: () => {}
 });
 if (!fresh.size) { console.error('No network could be reached; keeping the previous snapshot.'); process.exit(1); }
+// Do not carry pre-migration measured APRs forward for networks that failed to refresh.
+for (const [id, c] of Object.entries(chains)) {
+  delete c.aprMeasured;
+  delete c.aprEstimated;
+  if (!fresh.has(id)) { c.apr = null; c.chainApr = null; }
+}
 
 // Official uptime over each chain's slashing window.
 const uptime = { ...(prev?.uptime || {}) };

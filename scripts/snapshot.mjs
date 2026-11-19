@@ -183,23 +183,24 @@ for (const id of fresh) {
   console.log(`  ${id}: APR ${c.apr == null ? '— (provider unavailable)' : c.apr.toFixed(2) + '%'} (${c.aprSource || 'cosmos.directory'}), ${c.price}`);
 }
 
-/* Keplr APR scraper: prefer the displayed rate from our public Playwright service.
-   It is a chain-level APR, not a validator-specific net APR. Adjust for commission.
-   The old external providers remain as fallback until the service is online. */
+/* Prefer the collector's Cybernetics-specific NET APR.
+   Commission is already deducted upstream. Never apply it twice.
+   The gross APR remains available for historical reward modeling. */
 if (collectorUrl) {
   try {
     const remote = await fetchRemoteApr(collectorUrl);
     for (const [id, value] of Object.entries(remote)) {
       if (!value || !chains[id]) continue;
       const c = chains[id];
-      // Keplr chain APR is a network rate; delegators earn after validator commission.
-      c.chainApr = value.netApr / 100;
-      c.apr = value.netApr * (1 - c.commission);
+      // APR is already net of Cybernetics' 5% fee in the collector.
+      // Rewards/history calculations require the PRE-commission gross APR.
+      c.chainApr = value.grossApr / 100;
+      c.apr = value.netApr;
       c.aprSource = value.source;
       c.aprAsOf = value.asOf;
       c.aprFetchedAt = new Date().toISOString();
       c.aprError = null;
-      console.log(`  ${id}: APR ${c.apr.toFixed(2)}% (after commission; ${value.source})`);
+      console.log(`  ${id}: Cybernetics net APR ${c.apr.toFixed(2)}% (${value.source})`);
     }
   } catch (err) {
     console.warn('  Keplr APR collector unavailable: ' + err.message);

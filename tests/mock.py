@@ -95,6 +95,12 @@ def handle(route):
     u=route.request.url; p=urlparse(u); qs=parse_qs(p.query); path=p.path
     def ok(body, status=200): return route.fulfill(status=status, content_type='application/json', headers={'access-control-allow-origin':'*'}, body=json.dumps(body))
     calls.append(u)
+    if p.hostname=='public-osmosis-api.numia.xyz':
+        today=datetime.datetime.utcfromtimestamp(time.time()-D).strftime('%Y-%m-%d')
+        return ok([{'symbol':'OSMO','labels':today+' 00:00:00','apr':2.0},
+                   {'symbol':'total','labels':today+' 00:00:00','apr':5.2}])
+    if p.hostname=='app.nolus.io' and path=='/api/governance/apr':
+        return ok({'apr':0.045,'annualInflation':0})
     if p.hostname=='chains.cosmos.directory':
         n=path.strip('/');  return ok(CHAINS[n]) if n in CHAINS else ok({'error':'x'},500)
     if p.hostname=='validators.cosmos.directory':

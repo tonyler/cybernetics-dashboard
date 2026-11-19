@@ -5,7 +5,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tests')); import mock
 from playwright.async_api import async_playwright
 
-HOSTS = {'coingecko': 'https://api.coingecko.com', 'chains': 'https://chains.cosmos.directory', 'validators': 'https://validators.cosmos.directory', 'rest': 'https://rest.cosmos.directory', 'rpc': 'https://rpc.cosmos.directory'}
+HOSTS = {'coingecko': 'https://api.coingecko.com', 'chains': 'https://chains.cosmos.directory', 'validators': 'https://validators.cosmos.directory', 'rest': 'https://rest.cosmos.directory', 'rpc': 'https://rpc.cosmos.directory', 'numia': 'https://public-osmosis-api.numia.xyz', 'nolus': 'https://app.nolus.io'}
 class Fake:
     """Adapts mock.handle (written for Playwright routes) to a plain HTTP server."""
     def __init__(self, url, method, body): self.request = type('R', (), {'url': url, 'method': method, 'post_data': body})(); self.out = (404, b'{}')
@@ -43,8 +43,12 @@ async def main():
     snap = json.loads((ROOT / 'data' / 'snapshot.json').read_text())
     aprs = {k: round(c['apr'], 2) for k, c in snap['chains'].items()}
     priced = sorted(d for d, v in snap['history'].items() if all('price' in x for x in v.values()))
-    expected = {'cosmos': 0.1973, 'osmosis': 0.06, 'juno': 0.12, 'dymension': 0.05}
+    expected = {'cosmos': 0.1973, 'juno': 0.12, 'dymension': 0.05}
     assert all(abs(snap['chains'][id]['apr'] - value * (1 - snap['chains'][id]['commission']) * 100) < 1e-8 for id, value in expected.items())
+    assert abs(snap['chains']['osmosis']['apr'] - 5.2 * (1 - snap['chains']['osmosis']['commission'])) < 1e-8
+    assert abs(snap['chains']['nolus']['apr'] - 4.5 * (1 - snap['chains']['nolus']['commission'])) < 1e-8
+    assert snap['chains']['osmosis']['aprSource'] == 'numia'
+    assert snap['chains']['nolus']['aprSource'] == 'nolus'
     assert all('aprMeasured' not in c and 'aprEstimated' not in c for c in snap['chains'].values())
     assert 'aprState' not in snap
     print(f"provider APRs {aprs}: OK (cosmos.directory only, net of validator commission)")

@@ -35,14 +35,16 @@ const COINGECKO = process.env.API_BASE ? process.env.API_BASE.replace(/\/$/, '')
 run('data.js');
 const D = window.CyberneticsData;
 
+// Previous snapshot: the local file (restored by the workflow's cache), else the deployed one.
 async function previous() {
+  try { return JSON.parse(fs.readFileSync(OUT, 'utf8')); } catch {}
   if (process.env.SITE_URL) {
     try {
       const r = await fetch(new URL('data/snapshot.json', process.env.SITE_URL), { cache: 'no-store' });
       if (r.ok) return await r.json();
     } catch {}
   }
-  try { return JSON.parse(fs.readFileSync(OUT, 'utf8')); } catch { return null; }
+  return null;
 }
 
 const prev = await previous();
@@ -77,19 +79,21 @@ try {
   const now = await cg(`/simple/price?ids=${ids.join(',')}&vs_currencies=usd`);
   for (const id of fresh) { const p = now[chains[id].coingeckoId]?.usd; if (p) chains[id].price = p; }
 } catch (err) { console.warn(`  prices: ${err.message} (keeping cosmos.directory prices)`); }
-const pricesDay = prev?.pricesDay;
-if (pricesDay !== today) {
-  let ok = true;
-  for (const id of fresh) {
-    const coin = chains[id].coingeckoId; if (!coin) continue;
-    try {
-      const { prices } = await cg(`/coins/${coin}/market_chart?vs_currency=usd&days=${days}&interval=daily`);
-      for (const [ms, usd] of prices) { const d = new Date(ms).toISOString().slice(0, 10); (history[d] ??= {})[id] = { ...(history[d]?.[id] || {}), price: usd }; }
-    } catch (err) { ok = false; console.warn(`  ${id}: price history ${err.message}`); }
-    await new Promise(r => setTimeout(r, process.env.API_BASE ? 0 : 2500));   // stay under the free rate limit
-  }
-  if (ok) console.log(`  price history: ${days} days for ${ids.length} tokens`);
-  var pricesUpdated = ok ? today : pricesDay;
+// Daily price history: refreshed once a day per token, at most 2 tokens per run (the free API is strict);
+// a refused request (429) just waits for the next run.
+const priceHistoryDay = { ...(prev?.priceHistoryDay || {}) };
+let fetchedHistory = 0;
+for (const id of fresh) {
+  const coin = chains[id].coingeckoId;
+  if (!coin || priceHistoryDay[coin] === today || fetchedHistory >= 2) continue;
+  if (fetchedHistory) await new Promise(r => setTimeout(r, process.env.API_BASE ? 0 : 8000));
+  fetchedHistory++;
+  try {
+    const { prices } = await cg(`/coins/${coin}/market_chart?vs_currency=usd&days=${days}&interval=daily`);
+    for (const [ms, usd] of prices) { const d = new Date(ms).toISOString().slice(0, 10); (history[d] ??= {})[id] = { ...(history[d]?.[id] || {}), price: usd }; }
+    priceHistoryDay[coin] = today;
+    console.log(`  ${id}: ${prices.length} days of prices`);
+  } catch (err) { console.warn(`  ${id}: price history ${err.message}, retrying next run`); break; }
 }
 
 /* ── Measured APR ──
@@ -140,7 +144,7 @@ const list = [...events.values()].filter(e => Date.parse(e.date) >= keepFrom).so
 for (const id of completeNow) coverage[id] = { complete: true, newest: list.find(e => e.chain === id && e.type !== 'unbonded')?.date };
 
 const skip = new Set(['names', 'hexAddress', 'valcons', 'legacySearch', 'peer']);
-const snapshot = { generatedAt: new Date().toISOString(), chains, events: list, coverage, uptime, history, aprState, pricesDay: pricesUpdated ?? pricesDay };
+const snapshot = { generatedAt: new Date().toISOString(), chains, events: list, coverage, uptime, history, aprState, priceHistoryDay };
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, JSON.stringify(snapshot, (k, v) => skip.has(k) ? undefined : v));
 console.log(`wrote ${path.relative(ROOT, OUT)}: ${Object.keys(chains).length} networks, ${list.length} events, ${(fs.statSync(OUT).size / 1024).toFixed(0)} KB`);

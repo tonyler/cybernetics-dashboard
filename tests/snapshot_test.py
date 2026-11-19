@@ -44,7 +44,8 @@ async def main():
     aprs = {k: round(c['apr'], 2) for k, c in snap['chains'].items()}
     priced = sorted(d for d, v in snap['history'].items() if all('price' in x for x in v.values()))
     print(f"measured APR {aprs} (mock pays 15%)", 'OK' if all(abs(a - 15) < 0.3 for a in aprs.values()) and all(c.get('aprMeasured') for c in snap['chains'].values()) else 'FAIL')
-    print(f"CoinGecko: price now cosmos ${snap['chains']['cosmos']['price']}, daily prices for {len(priced)} days", 'OK' if snap['chains']['cosmos']['price'] == 4.4 and len(priced) >= 90 else 'FAIL')
+    priced = sorted(d for d, v in snap['history'].items() if sum('price' in x for x in v.values()) >= 4)
+    print(f"CoinGecko: price now cosmos ${snap['chains']['cosmos']['price']}, 2 tokens per run → all 4 after run 2: {len(priced)} days", 'OK' if snap['chains']['cosmos']['price'] == 4.4 and len(priced) >= 90 else 'FAIL')
     print(f'deepest page fetched: run 1 = {first}, run 2 = {second} (only what is new)', 'OK' if first > 5 and second == 1 else 'FAIL')
 
     async with async_playwright() as p:

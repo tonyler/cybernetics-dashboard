@@ -415,7 +415,12 @@
   const day = d => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
   const ago = d => { const m = Math.max(0, (Date.now() - d) / 6e4); return m < 1 ? 'now' : m < 60 ? (m | 0) + 'm' : m < 1440 ? (m / 60 | 0) + 'h' : m < 10080 ? (m / 1440 | 0) + 'd' : day(d); };
   const selected = () => state.chain === 'all' ? Object.keys(DATA.chains) : [state.chain];
-  const sum = (obj) => selected().reduce((s, id) => s + (obj[id] || 0), 0);
+  const sum = (obj, metric) => {
+    const ids = selected();
+    // Unknown historical APR must never be plotted as zero rewards.
+    if ((metric === 'stakerRewards' || metric === 'operatorRewards') && ids.some(id => obj[id] == null)) return null;
+    return ids.reduce((s, id) => s + (obj[id] || 0), 0);
+  };
 
   // Rolling digits (odometer, à la NumberFlow): each digit is a 0–9 column that slides to its value.
   // Same-shaped values roll in place; a new shape rolls up from zero. Screen readers get the plain text.
@@ -445,33 +450,46 @@
   let points = [];
   function renderCharts() {
     if (!DATA.daily.length) return;
-    const series = DATA.daily.slice(-state.days).map(d => ({ date: new Date(d.date), v: sum(d[state.metric]) }));
+    const series = DATA.daily.slice(-state.days).map(d => ({ date: new Date(d.date), v: sum(d[state.metric], state.metric) }));
     const isMoney = state.metric === 'staked';
     const fmt = v => isMoney ? compact(v) : usd(v, v < 100 ? 2 : 0);
-    const first = series[0].v, last = series.at(-1).v, change = first ? (last - first) / first * 100 : 0;
-    roll($('perfValue'), fmt(last));
-    $('perfDelta').textContent = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
-    $('perfDelta').classList.toggle('neg', change < 0);
+    const available = series.filter(p => p.v != null);
+    const first = available[0]?.v, last = available.at(-1)?.v;
+    const change = first > 0 && available.length > 1 ? (last - first) / first * 100 : null;
+    roll($('perfValue'), last == null ? '—' : fmt(last));
+    $('perfDelta').textContent = change == null ? '—' : (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
+    $('perfDelta').classList.toggle('neg', change != null && change < 0);
     $('perfFrom').textContent = day(series[0].date);
     $('perfTo').textContent = day(series.at(-1).date);
 
     const W = 900, H = 300, pad = 24;
-    const vs = series.map(p => p.v), min = Math.min(...vs), max = Math.max(...vs), span = (max - min) || 1;
+    const vs = available.map(p => p.v), min = vs.length ? Math.min(...vs) : 0, max = vs.length ? Math.max(...vs) : 0, span = (max - min) || 1;
     const lo = min - span * .3, hi = max + span * .2;
-    points = series.map((p, i) => ({ ...p, x: i / (series.length - 1) * W, y: H - pad - (p.v - lo) / (hi - lo) * (H - 2 * pad) }));
+    points = series.map((p, i) => ({ ...p, x: i / Math.max(1, series.length - 1) * W,
+      y: p.v == null ? null : H - pad - (p.v - lo) / (hi - lo) * (H - 2 * pad) }));
     const el = $('perfSvg'); el.replaceChildren();
     const g = svg(svg(el, 'defs', {}), 'linearGradient', { id: 'fill', x2: 0, y2: 1 });
     svg(g, 'stop', { 'stop-color': '#111111', 'stop-opacity': .14 });
     svg(g, 'stop', { offset: 1, 'stop-color': '#111111', 'stop-opacity': 0 });
     [.25, .5, .75].forEach(t => svg(el, 'line', { class: 'grid', x1: 0, x2: W, y1: H * t, y2: H * t }));
-    const d = points.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join('');
-    svg(el, 'path', { d: d + `L${W},${H}L0,${H}Z`, fill: 'url(#fill)' });
-    svg(el, 'path', { d, class: 'line' });
+    // Break the line at unavailable dates instead of joining or inventing points.
+    let segment = [];
+    const drawSegment = () => {
+      if (!segment.length) return;
+      const d = segment.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join('');
+      const firstP = segment[0], lastP = segment.at(-1);
+      svg(el, 'path', { d: d + `L${lastP.x},${H}L${firstP.x},${H}Z`, fill: 'url(#fill)' });
+      svg(el, 'path', { d, class: 'line' });
+      segment = [];
+    };
+    for (const p of points) { if (p.y == null) drawSegment(); else segment.push(p); }
+    drawSegment();
     const end = $('perfEnd');
-    end.style.cssText = `left:100%;top:${points.at(-1).y / H * 100}%;opacity:0`;
-    setTimeout(() => end.style.opacity = 1, reduced ? 0 : 1000);
+    const latestPoint = points.filter(p => p.y != null).at(-1);
+    end.style.cssText = latestPoint ? `left:${latestPoint.x / W * 100}%;top:${latestPoint.y / H * 100}%;opacity:0` : 'opacity:0';
+    if (latestPoint) setTimeout(() => end.style.opacity = 1, reduced ? 0 : 1000);
     $('perfUnit').hidden = isMoney;   // rewards are daily figures
-    $('perfPlot').setAttribute('aria-label', `${fmt(last)}${isMoney ? '' : ' per day'}, ${change.toFixed(2)}% over ${state.days} days. Arrow keys inspect each day.`);
+    $('perfPlot').setAttribute('aria-label', `${last == null ? 'Reward data unavailable' : fmt(last)}${isMoney ? '' : ' per day'}, ${change == null ? 'change unavailable' : change.toFixed(2) + '% change'} over ${state.days} days. Arrow keys inspect each day.`);
     inspect(null);
   }
   let cursor = null;
@@ -480,13 +498,13 @@
     cursor = i;
     if (i == null) return parts.forEach(p => p.hidden = true);
     const p = points[i = cursor = Math.max(0, Math.min(points.length - 1, i))], box = $('perfPlot');
-    const x = p.x / 900 * 100, y = p.y / 300 * 100;
+    const x = p.x / 900 * 100, y = p.y == null ? 50 : p.y / 300 * 100;
     parts.forEach(n => n.hidden = false);
     parts[0].style.left = x + '%';
     parts[1].style.cssText = `left:${x}%;top:${y}%`;
-    parts[2].innerHTML = `<small>${day(p.date)}</small>${state.metric === 'staked' ? usd(p.v) : usd(p.v, 2) + ' / day'}`;
+    parts[2].innerHTML = `<small>${day(p.date)}</small>${p.v == null ? 'APR unavailable' : state.metric === 'staked' ? usd(p.v) : usd(p.v, 2) + ' / day'}`;
     parts[2].style.left = Math.max(56, Math.min(box.clientWidth - 56, p.x / 900 * box.clientWidth)) + 'px';
-    parts[2].style.top = Math.max(44, p.y / 300 * box.clientHeight) + 'px';
+    parts[2].style.top = Math.max(44, y / 100 * box.clientHeight) + 'px';
   }
   const perfPlot = $('perfPlot');
   perfPlot.addEventListener('pointermove', e => { const b = perfPlot.getBoundingClientRect(); inspect(Math.round((e.clientX - b.left) / b.width * (points.length - 1))); });

@@ -90,6 +90,36 @@ where the validator can't be found is hidden automatically.
 - Other networks: Cosmos Directory. All displayed delegator APRs account for validator commission.
 - If an APR endpoint is unavailable, the snapshot keeps a verified rate from either approved provider for up to 72 hours; it never substitutes inflation-only estimates. The snapshot records `aprSource`, `aprFetchedAt`, `aprAsOf`, `aprCheckedAt`, and `aprError` for diagnostics.
 
+## Single server API: complete dashboard snapshot
+
+All regular dashboard data collection now runs on the server hosting
+`tonyler/Apr-scraper`. Every 15 minutes that service executes the existing
+`scripts/snapshot.mjs` from a local checkout of this repository and exposes
+`https://tonyler.is-not-a.dev/scraper/snapshot`. GitHub Actions downloads
+**that one complete JSON snapshot every 15 minutes** and deploys it to
+GitHub Pages. It no longer queries Cosmos, CoinGecko or external APR APIs.
+
+Included: six validators' staking state and commissions, delegation and
+transaction activity, recorded staking APRs and token prices, 90-day chart
+history, slashing uptime statistics, and the last 50 signed-block flags
+per network. The Uptime tab no longer polls RPC from each visitor's browser;
+it refreshes on the published snapshot schedule. Wallet-initiated actions
+still require interaction with the user's wallet and network.
+
+Server update (required when snapshot-generator logic changes):
+
+```bash
+cd ~/apps/Apr-scraper
+git pull origin main
+sudo bash deploy/install-dashboard.sh
+sudo systemctl restart keplr-apr-scraper
+curl -s 'https://tonyler.is-not-a.dev/scraper/health' | python3 -m json.tool
+curl -s 'https://tonyler.is-not-a.dev/scraper/snapshot' | python3 -m json.tool
+```
+
+The server retains the last validated snapshot when upstream collection
+fails. GitHub Actions refuses malformed or overly stale snapshots rather
+than replacing the published page with invalid data.
 ## Keplr staking APR collector
 
 The collector is now also the **USD token-price and APR-history service**. Production GitHub Actions no longer calls CoinGecko directly: it reads `/scraper/api` for current prices and `/scraper/history?days=400` for recorded daily prices/APRs. The scraper polls prices every 10 minutes and stores up to 30 days of individual samples plus up to 400 days of daily records; older price backfill is attempted gradually subject to upstream availability. GitHub Pages visitors continue to read the already assembled static `data/snapshot.json`, not CoinGecko. Validator stake, transactions, and uptime still come from the existing Cosmos chain sources in the GitHub snapshot job. This doesn't change the page UI.

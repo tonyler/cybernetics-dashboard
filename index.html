@@ -42,10 +42,14 @@
   /* Bar */
   .bar { position: sticky; top: 0; z-index: 10; background: #ededebd9; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
   .bar .wrap { display: flex; align-items: center; gap: 14px; }
-  .tabs { position: relative; display: flex; gap: 26px; height: 56px; margin-right: auto; }
+  .tabs { position: relative; display: flex; gap: 26px; height: 56px; margin-right: auto; flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: none; }
+  .tabs.scrolls { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+  .switch, .stake { flex: none; }
   .tabs button { color: var(--dim); font-weight: 500; transition: color .2s; }
   .tabs button:hover, .tabs [aria-current="page"] { color: var(--text); }
-  .ink { position: absolute; bottom: -1px; height: 1px; background: var(--sig); transition: left .45s var(--ease), width .45s var(--ease), opacity .2s; }
+  .ink { position: absolute; bottom: 0; height: 1px; background: var(--sig); transition: left .45s var(--ease), width .45s var(--ease), opacity .2s; }
   .stake { position: relative; overflow: hidden; height: 32px; padding: 0 16px; border-radius: 6px; background: var(--text); color: var(--paper); font-weight: 600; }
   .stake, .go { transition: transform .12s var(--ease), background .2s; }
   .stake:active, .go:active { transform: scale(.97); }
@@ -222,7 +226,6 @@
   @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 
   @media (max-width: 720px) {
-    .tabs { gap: 18px; }
     .id { gap: 16px; padding: 24px 0; flex-wrap: wrap; }
     .mark { width: 84px; }
     .id > div { flex: 1; min-width: 0; }
@@ -230,9 +233,10 @@
     .tabs { height: 52px; }
     .head { flex-wrap: wrap; align-items: flex-end; }
     .up-grid { grid-template-columns: repeat(25, 1fr); gap: 3px; }
-    .tabs { gap: 14px; }
+    .tabs { gap: 16px; }
     .tabs button { font-size: 13px; }
     .stake { padding: 0 12px; }
+    .wrap { width: calc(100% - 32px); }
     .plot { height: 220px; margin-top: 24px; }
     .row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
     .row .where, .row time { display: none; }
@@ -241,6 +245,10 @@
     .panel { padding: 22px; }
   }
   .row .sub { display: none !important; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--faint); }
+  @media (max-width: 400px) {
+    .switch-btn { padding: 0 3px; }
+    .switch-btn svg.chev { display: none; }
+  }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
   }
@@ -873,6 +881,10 @@
     const tab = document.querySelector('.tabs [aria-current]'), ink = document.querySelector('.ink');
     ink.style.opacity = tab ? 1 : 0;
     if (tab) { ink.style.left = tab.offsetLeft + 'px'; ink.style.width = tab.offsetWidth + 'px'; }
+    // On narrow phones the tabs scroll sideways; keep the active one in view and fade the cut edge.
+    const tabs = document.querySelector('.tabs');
+    tabs.classList.toggle('scrolls', tabs.scrollWidth > tabs.clientWidth + 1);
+    if (tab && tabs.scrollWidth > tabs.clientWidth) tabs.scrollTo({ left: Math.max(0, tab.offsetLeft - (tabs.clientWidth - tab.offsetWidth) / 2), behavior: reduced ? 'auto' : 'smooth' });
   }
   addEventListener('resize', () => { placeInk(); placeThumbs(); }, { passive: true });
 

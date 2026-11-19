@@ -193,8 +193,8 @@ if (collectorUrl) {
       if (!value || !chains[id]) continue;
       const c = chains[id];
       // Keplr chain APR is a network rate; delegators earn after validator commission.
-      c.chainApr = value.netApr / 100;
-      c.apr = value.netApr * (1 - c.commission);
+      c.chainApr = value.grossApr / 100;
+      c.apr = value.grossApr * (1 - c.commission);
       c.aprSource = value.source;
       c.aprAsOf = value.asOf;
       c.aprFetchedAt = new Date().toISOString();

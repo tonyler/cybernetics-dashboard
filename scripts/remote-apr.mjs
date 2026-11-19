@@ -3,28 +3,47 @@ const KEPLR_PAGES = Object.freeze({
   cosmos:'cosmos-hub', osmosis:'osmosis', juno:'juno',
   chihuahua:'chihuahua', nolus:'nolus', dymension:'dymension'
 });
+// Chain-registry names used in the scraper's cosmos-sdk-rest source URLs.
+const REGISTRY = Object.freeze({
+  cosmos:'cosmoshub', osmosis:'osmosis', juno:'juno',
+  chihuahua:'chihuahua', nolus:'nolus', dymension:'dymension'
+});
+// Every source the scraper may publish, and the exact URL each must point at.
+function allowedSources(id) {
+  const ok = {
+    'keplr-dashboard': 'https://wallet.keplr.app/chains/' + KEPLR_PAGES[id],
+    'cosmos-sdk-rest': 'https://rest.cosmos.directory/' + REGISTRY[id] + '/cosmos/mint/v1beta1/annual_provisions'
+  };
+  if (id === 'nolus') {
+    ok['staking-explorer'] = 'https://staking-explorer.com/explorer/nolus';
+    ok['nolus-official-api'] = 'https://app.nolus.io/api/governance/apr';
+  }
+  return ok;
+}
+const pct = v => v === null || v === undefined || v === '' ? null : Number(v);
 export function parseRemoteApr(payload, id, now = Date.now()) {
   const item = payload?.networks?.[id];
   if (!Object.hasOwn(KEPLR_PAGES, id) || !item)
     throw Error('No Keplr APR for '+id);
-  const isKeplr = item.source === 'keplr-dashboard' &&
-    item.sourceUrl === 'https://wallet.keplr.app/chains/' + KEPLR_PAGES[id];
-  const isNolusFallback = id === 'nolus' && item.source === 'staking-explorer' &&
-    item.sourceUrl === 'https://staking-explorer.com/explorer/nolus';
-  if ((!isKeplr && !isNolusFallback) ||
+  const expectedUrl = allowedSources(id)[item.source];
+  if (!expectedUrl || item.sourceUrl !== expectedUrl ||
       item.unit !== 'percent' || item.basis !== 'network-staking')
     throw Error('Unrecognized staking APR source for '+id);
-  // null is NOT 0: missing Keplr rates must never become 0% via Number(null).
-  if (item.apr === null || item.apr === undefined || item.apr === '')
-    throw Error('Unavailable Keplr APR for '+id);
-  const value=Number(item.apr), t=Date.parse(item.fetchedAt || '');
-  if (!Number.isFinite(value) || value<0 || value>1000)
+  // The scraper's `apr` is already net of the validator commission; `grossStakerApr`
+  // is the network rate before commission. Older payloads only had `apr` (gross).
+  // null is NOT 0: missing rates must never become 0% via Number(null).
+  const hasGross = Object.hasOwn(item, 'grossStakerApr');
+  const gross = pct(hasGross ? item.grossStakerApr : item.apr);
+  if (gross === null) throw Error('Unavailable Keplr APR for '+id);
+  const t=Date.parse(item.fetchedAt || '');
+  if (!Number.isFinite(gross) || gross<0 || gross>1000)
     throw Error('Invalid Keplr APR for '+id);
   if (!Number.isFinite(t) || t>now+60000 || now-t>24*3600000)
     throw Error('Stale Keplr APR for '+id);
   if (!['ok','stale'].includes(item.status))
     throw Error('Keplr APR status invalid for '+id);
-  return {netApr:value, source:item.source, asOf:item.fetchedAt, status:item.status};
+  // netApr kept as an alias for callers that predate grossApr.
+  return {grossApr:gross, netApr:gross, source:item.source, asOf:item.fetchedAt, status:item.status};
 }
 export async function fetchRemoteApr(url,{fetchFn=fetch,now=Date.now()}={}) {
   if (!/^https:\/\//.test(url) &&

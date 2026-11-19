@@ -35,3 +35,14 @@ test('fetches only scraper API and history, no CoinGecko browser calls',async()=
   assert.ok(urls[0].endsWith('/scraper/api'));
   assert.ok(urls[1].includes('/scraper/history?days=400'));
 });
+
+test('history keeps APRs from the new collector sources, preferring gross',async()=>{
+  const {validateHistory}=await import('../scripts/collector-data.mjs');
+  const out=validateHistory({unit:{apr:'percent',price:'usd'},days:{
+    '2026-11-18':{nolus:{apr:4.45,grossStakerApr:4.68,aprSource:'nolus-official-api'},
+                  cosmos:{apr:18.78,aprSource:'cosmos-sdk-rest',price:1,priceSource:'coingecko'}}}},Date.parse('2026-11-19T12:00:00Z'));
+  assert.ok(Math.abs(out['2026-11-18'].nolus.chainApr-0.0468)<1e-12);
+  // Net-only record from a new source: no chainApr (never commission twice), price kept.
+  assert.equal(out['2026-11-18'].cosmos.chainApr,undefined);
+  assert.equal(out['2026-11-18'].cosmos.price,1);
+});

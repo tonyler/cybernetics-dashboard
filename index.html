@@ -417,8 +417,13 @@
   const selected = () => state.chain === 'all' ? Object.keys(DATA.chains) : [state.chain];
   const sum = (obj, metric) => {
     const ids = selected();
-    // Unknown historical APR must never be plotted as zero rewards.
-    if ((metric === 'stakerRewards' || metric === 'operatorRewards') && ids.some(id => obj[id] == null)) return null;
+    // Unknown historical APR must never be plotted as zero rewards, but one network
+    // without an APR must not blank the total for all the others: sum the known ones,
+    // and report unavailable only when no selected network has a value.
+    if (metric === 'stakerRewards' || metric === 'operatorRewards') {
+      const known = ids.filter(id => obj[id] != null);
+      return known.length ? known.reduce((s, id) => s + obj[id], 0) : null;
+    }
     return ids.reduce((s, id) => s + (obj[id] || 0), 0);
   };
 

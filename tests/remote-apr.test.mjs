@@ -29,3 +29,27 @@ test('JSON API supports all six chains and partial data',async()=>{
   assert.equal(results.osmosis.netApr,5.2);
   assert.equal(results.juno,null);
 });
+
+// Shapes published by /scraper/api since the collector switched sources (Nov 2026).
+const live={
+  cosmos:{source:'cosmos-sdk-rest',sourceUrl:'https://rest.cosmos.directory/cosmoshub/cosmos/mint/v1beta1/annual_provisions',apr:18.78,grossStakerApr:19.77},
+  chihuahua:{source:'cosmos-sdk-rest',sourceUrl:'https://rest.cosmos.directory/chihuahua/cosmos/mint/v1beta1/annual_provisions',apr:0,grossStakerApr:0},
+  nolus:{source:'nolus-official-api',sourceUrl:'https://app.nolus.io/api/governance/apr',apr:4.45,grossStakerApr:4.68},
+  osmosis:{source:'keplr-dashboard',sourceUrl:'https://wallet.keplr.app/chains/osmosis',apr:6.08,grossStakerApr:6.4}
+};
+const liveItem=id=>({...live[id],unit:'percent',basis:'network-staking',fetchedAt:'2026-11-19T11:50:00Z',status:'ok'});
+test('accepts cosmos-sdk-rest and nolus-official-api sources',()=>{
+  for (const id of Object.keys(live))
+    assert.equal(parseRemoteApr({networks:{[id]:liveItem(id)}},id,NOW).grossApr,live[id].grossStakerApr);
+});
+test('uses grossStakerApr so commission is not deducted twice',()=>{
+  const r=parseRemoteApr({networks:{osmosis:liveItem('osmosis')}},'osmosis',NOW);
+  assert.equal(r.grossApr,6.4);
+});
+test('null grossStakerApr is unavailable, not 0 and not the net apr',()=>{
+  assert.throws(()=>parseRemoteApr({networks:{nolus:{...liveItem('nolus'),grossStakerApr:null}}},'nolus',NOW));
+});
+test('new sources still require their exact URL',()=>{
+  assert.throws(()=>parseRemoteApr({networks:{cosmos:{...liveItem('cosmos'),sourceUrl:'https://rest.cosmos.directory/juno/cosmos/mint/v1beta1/annual_provisions'}}},'cosmos',NOW));
+  assert.throws(()=>parseRemoteApr({networks:{cosmos:{...liveItem('cosmos'),source:'nolus-official-api',sourceUrl:'https://app.nolus.io/api/governance/apr'}}},'cosmos',NOW));
+});

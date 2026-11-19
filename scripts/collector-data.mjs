@@ -1,4 +1,6 @@
 // Read cached public data from our own collector. No direct CoinGecko calls.
+const NET_ONLY_SOURCES=['cosmos-sdk-rest','nolus-official-api'];
+const APR_SOURCES=['keplr-dashboard','staking-explorer','cosmos-sdk-rest','nolus-official-api'];
 export function validatePrices(payload, now=Date.now()) {
   const prices={};
   for(const [id,p] of Object.entries(payload?.prices || {})) {
@@ -22,9 +24,15 @@ export function validateHistory(payload,now=Date.now()) {
       const row={};
       if(typeof rec.price==='number' && Number.isFinite(rec.price) && rec.price>0 &&
          rec.priceSource==='coingecko') row.price=rec.price;
-      if(typeof rec.apr==='number' && Number.isFinite(rec.apr) && rec.apr>=0 &&
-         rec.apr<=1000 && ['keplr-dashboard','staking-explorer'].includes(rec.aprSource)) {
-        row.chainApr=rec.apr/100;
+      // chainApr is the pre-commission network rate. The collector's newer sources
+      // record `apr` net of commission, so use their grossStakerApr and skip records
+      // that lack it rather than deducting commission twice. Legacy Keplr /
+      // Staking Explorer records stored the gross rate in `apr`.
+      const apr=typeof rec.grossStakerApr==='number' ? rec.grossStakerApr
+        : NET_ONLY_SOURCES.includes(rec.aprSource) ? null : rec.apr;
+      if(typeof apr==='number' && Number.isFinite(apr) && apr>=0 &&
+         apr<=1000 && APR_SOURCES.includes(rec.aprSource)) {
+        row.chainApr=apr/100;
         row.aprSource=rec.aprSource;
       }
       if(Object.keys(row).length) dayRows[id]=row;

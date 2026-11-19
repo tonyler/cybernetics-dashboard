@@ -29,8 +29,9 @@ test('prior days use observed historical APR and price, never today APR', () => 
   const series=buildDaily({cosmos:chain},[],history);
   close(series.at(-2).stakerRewards.cosmos,500*0.10*0.90/365*4);
   close(series.at(-1).stakerRewards.cosmos,1000*0.20*0.90/365*2);
-  assert.equal(series.at(-3).stakerRewards.cosmos,null);
-  assert.equal(series.at(-3).operatorRewards.cosmos,null);
+  // Before APR tracking, use the current published APR as an estimate.
+  close(series.at(-3).stakerRewards.cosmos,1000*.20*.90/365*2);
+  close(series.at(-3).operatorRewards.cosmos,1000*.20*.10/365*2);
 });
 
 test('commission of 100% correctly assigns gross rewards to operator', () => {
@@ -49,4 +50,19 @@ test('a genuine recorded zero APR remains zero earnings', () => {
   const series=buildDaily({cosmos:chain},[],{[day(0)]:{cosmos:{chainApr:0}}});
   close(series.at(-1).stakerRewards.cosmos,0);
   close(series.at(-1).operatorRewards.cosmos,0);
+});
+
+
+test('backfills earlier chart days from last recorded APR if current rate is unavailable', () => {
+  const c = {...chain,chainApr:null,apr:null};
+  const h = {[day(-1)]:{cosmos:{chainApr:0.12}}};
+  const series=buildDaily({cosmos:c},[],h);
+  close(series.at(-3).stakerRewards.cosmos,1000*.12*.90/365*2);
+  close(series.at(-2).stakerRewards.cosmos,1000*.12*.90/365*2);
+});
+
+test('the current APR produces nonempty chart history without daily APR records', () => {
+  const series=buildDaily({cosmos:chain},[],{});
+  assert.ok(series.every(d => d.stakerRewards.cosmos > 0));
+  assert.ok(series.every(d => d.operatorRewards.cosmos > 0));
 });

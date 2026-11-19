@@ -43,12 +43,12 @@ export function nolusApr(payload) {
 // not inflation-derived APR. Only used when the official app API fails.
 export function stakingExplorerApr(html, chain) {
   if (typeof html !== 'string') throw Error('invalid explorer HTML');
-  const start = html.search(new RegExp(chain + '\\s+staking APR', 'i'));
-  if (start < 0) throw Error('explorer missing '+chain+' staking APR heading');
-  const section = html.slice(start, start + 1800)
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+  const text = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const start = text.search(new RegExp(chain + '\\s+staking APR', 'i'));
+  if (start < 0) throw Error('explorer missing '+chain+' staking APR heading');
+  const section = text.slice(start, start + 300);
   const found = section.match(/\bAPR\s+(\d+(?:\.\d+)?)\s*%/i);
   if (!found) throw Error('explorer has no explicit staking APR');
   return {grossApr: positivePercent(found[1]), source:'staking-explorer'};

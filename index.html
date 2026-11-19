@@ -459,6 +459,8 @@
     roll($('perfValue'), last == null ? '—' : fmt(last));
     $('perfDelta').textContent = change == null ? '—' : (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
     $('perfDelta').classList.toggle('neg', change != null && change < 0);
+    // Percentage change applies to staked value, not per-day reward estimates.
+    $('perfDelta').hidden = !isMoney;
     $('perfFrom').textContent = day(series[0].date);
     $('perfTo').textContent = day(series.at(-1).date);
 

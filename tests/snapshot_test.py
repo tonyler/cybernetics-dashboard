@@ -5,7 +5,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tests')); import mock
 from playwright.async_api import async_playwright
 
-HOSTS = {'coingecko': 'https://api.coingecko.com', 'chains': 'https://chains.cosmos.directory', 'validators': 'https://validators.cosmos.directory', 'rest': 'https://rest.cosmos.directory', 'rpc': 'https://rpc.cosmos.directory', 'numia': 'https://public-osmosis-api.numia.xyz', 'nolus': 'https://app.nolus.io'}
+HOSTS = {'coingecko': 'https://api.coingecko.com', 'chains': 'https://chains.cosmos.directory', 'validators': 'https://validators.cosmos.directory', 'rest': 'https://rest.cosmos.directory', 'rpc': 'https://rpc.cosmos.directory', 'numia': 'https://public-osmosis-api.numia.xyz', 'nolus': 'https://app.nolus.io', 'staking-explorer': 'https://staking-explorer.com'}
 class Fake:
     """Adapts mock.handle (written for Playwright routes) to a plain HTTP server."""
     def __init__(self, url, method, body): self.request = type('R', (), {'url': url, 'method': method, 'post_data': body})(); self.out = (404, b'{}')

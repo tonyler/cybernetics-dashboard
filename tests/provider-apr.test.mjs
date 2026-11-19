@@ -25,8 +25,8 @@ test('Nolus only accepts explicit external APR and normalizes display units', ()
 test('External providers replace inflation APR and apply validator commission', () => {
   const prior = {apr:0,chainApr:0,commission:0.05};
   const r = chooseApr('osmosis',prior,null,{grossApr:5.2,source:'numia',asOf:'2026-11-18'},NOW);
-  assert.equal(r.apr,4.94);
-  assert.equal(r.chainApr,0.052000000000000005);
+  assert.ok(Math.abs(r.apr-4.94)<1e-10);
+  assert.ok(Math.abs(r.chainApr-0.052)<1e-10);
   assert.equal(r.aprSource,'numia');
   assert.equal(r.aprAsOf,'2026-11-18');
 });

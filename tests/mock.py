@@ -99,7 +99,7 @@ def handle(route):
     calls.append(u)
     if p.hostname=='public-osmosis-api.numia.xyz':
         today=datetime.datetime.utcfromtimestamp(time.time()-D).strftime('%Y-%m-%d')
-        return ok([{'symbol':'OSMO','labels':today+' 00:00:00','apr':2.0},
+        return ok([{'symbol':'OSMO','labels':today+' 00:00:00','apr':5.2},
                    {'symbol':'total','labels':today+' 00:00:00','apr':5.2}])
     if p.hostname=='app.nolus.io' and path=='/api/governance/apr':
         return ok({'apr':0.045,'annualInflation':0})

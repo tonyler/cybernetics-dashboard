@@ -79,6 +79,31 @@ await Promise.all([...fresh].map(async id => {
   try { uptime[id] = await D.signingStats(chains[id]); } catch (err) { console.warn(`  ${id}: uptime failed (${err.message})`); }
 }));
 
+// Record the last 50 block-signing flags on the collecting server. Visitors
+// use this cached grid instead of querying RPC every six seconds.
+const uptimeBlocks = {...(prev?.uptimeBlocks || {})};
+await Promise.all([...fresh].map(async id=>{
+  const c=chains[id];
+  try {
+    const head=await D.commit(c);
+    const heights=Array.from({length:50},(_,i)=>head.height-49+i).filter(h=>h>0);
+    const blocks={...(uptimeBlocks[id]?.blocks || {})};
+    const queue=[...heights];
+    await Promise.all(Array.from({length:6},async()=>{
+      while(queue.length) {
+        const height=queue.pop();
+        try {
+          const reading=height===head.height?head:await D.commit(c,height);
+          blocks[height]=reading.signed;
+        }catch{}
+      }
+    }));
+    const filtered=Object.fromEntries(Object.entries(blocks)
+      .filter(([height])=>Number(height)>head.height-50 && Number(height)<=head.height));
+    uptimeBlocks[id]={latest:head.height,blocks:filtered,checkedAt:new Date().toISOString()};
+  }catch(err){console.warn('  '+id+': block grid unavailable ('+err.message+')');}
+}));
+
 /* ── Prices and history ──
    Production: all CoinGecko requests run on the self-hosted collector only.
    Read its cached price + APR history; retain previous snapshot history on errors.
@@ -199,7 +224,7 @@ const list = [...events.values()].filter(e => Date.parse(e.date) >= keepFrom).so
 for (const id of completeNow) coverage[id] = { complete: true, newest: list.find(e => e.chain === id && e.type !== 'unbonded')?.date };
 
 const skip = new Set(['names', 'hexAddress', 'valcons', 'legacySearch', 'peer']);
-const snapshot = { generatedAt: new Date().toISOString(), chains, events: list, coverage, uptime, history, priceHistoryDay };
+const snapshot = { generatedAt: new Date().toISOString(), chains, events: list, coverage, uptime, uptimeBlocks, history, priceHistoryDay };
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, JSON.stringify(snapshot, (k, v) => skip.has(k) ? undefined : v));
 console.log(`wrote ${path.relative(ROOT, OUT)}: ${Object.keys(chains).length} networks, ${list.length} events, ${(fs.statSync(OUT).size / 1024).toFixed(0)} KB`);

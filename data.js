@@ -9,7 +9,7 @@
   Output (what index.html renders):
     chains  { [id]: { name, token, icon, apr, chainApr, commission, unbonding, tokens, price, decimals, denom,
                       chainId, registry, valoper, account, rpc, gasPrice, wallet, keplrUrl } }
-    events  [{ key, type, dir?, chain, text, detail, date, hash, amount, unbondsAt? }]   newest first
+    events  [{ key, type, dir?, peer?, peerName?, chain, text, detail, date, hash, amount, unbondsAt? }]   newest first
             type: delegation | undelegation | redelegation (dir: in|out) | unbonded | vote
     daily   [{ date, flows, staked, stakerRewards, operatorRewards }]   oldest first; each is { [chainId]: USD }
 
@@ -145,15 +145,33 @@
     return [...out.values()];
   }
 
+  // Every validator's name on a chain, in one paginated request (all bond statuses), cached.
+  async function validatorNames(c) {
+    if (c.names) return c.names;
+    const names = new Map();
+    let key = '';
+    for (let i = 0; i < 10; i++) {
+      const r = await get(`${API.rest}${c.registry}/cosmos/staking/v1beta1/validators?pagination.limit=500` +
+        (key ? `&pagination.key=${encodeURIComponent(key)}` : ''), 30000);
+      for (const v of r.validators || []) names.set(v.operator_address, v.description?.moniker?.trim());
+      key = r.pagination?.next_key;
+      if (!key) break;
+    }
+    return (c.names = names);
+  }
+
   async function nameRedelegationPeers(c, events, monikers) {
     const peers = [...new Set(events.filter(e => e.type === 'redelegation').map(e => e.peer))];
-    const names = new Map(monikers ? peers.map(p => [p, monikers.get(p)]) : []);
-    await Promise.all(peers.filter(p => !names.get(p)).slice(0, 20).map(p =>
-      get(`${API.rest}${c.registry}/cosmos/staking/v1beta1/validators/${p}`)
-        .then(r => names.set(p, r.validator?.description?.moniker)).catch(() => {})));
+    if (!peers.length) return;
+    let names = monikers;
+    if (!names || peers.some(p => !names.get(p))) names = await validatorNames(c).catch(() => monikers || new Map());
+    // Anything still unknown (e.g. a validator that has since been removed): ask for it directly.
+    const missing = peers.filter(p => !names.get(p));
+    await Promise.all(missing.map(p => get(`${API.rest}${c.registry}/cosmos/staking/v1beta1/validators/${p}`)
+      .then(r => names.set(p, r.validator?.description?.moniker?.trim())).catch(() => {})));
     for (const e of events) if (e.type === 'redelegation') {
-      const name = names.get(e.peer) || (e.peer.slice(0, 12) + '…' + e.peer.slice(-4));
-      e.text = (e.dir === 'in' ? 'Redelegated from ' : 'Redelegated to ') + name;
+      e.text = 'Redelegation';
+      e.peerName = names.get(e.peer) || (e.peer.slice(0, 10) + '…' + e.peer.slice(-4));
     }
   }
 

@@ -19,7 +19,7 @@ Opening `index.html` directly also works. To publish, enable **GitHub Pages** (S
 |---|---|
 | `config.js` | **The only file to edit.** Validator identity and the list of networks. |
 | `data.js` | Fetches live data from public Cosmos APIs and shapes it into `{ chains, events, daily }`. |
-| `wallet.js` | Stake: builds, signs (Keplr / Leap) and broadcasts a delegation. Ledger supported. |
+| `wallet.js` | Stake: connect Keplr / Leap, show balance, build + sign + broadcast a delegation. Ledger and Ethermint keys (Dymension) supported. On phones without an extension it reopens the page in the Keplr app. |
 | `index.html` | The UI: markup, styles, rendering, state. |
 | `assets/` | Brand mark, wordmark, network icons. |
 | `tests/` | Encoding test (vs CosmJS) and an offline end-to-end test with mocked chain APIs. |
@@ -37,7 +37,7 @@ where the validator can't be found is hidden automatically.
 | Total staked | Validator `tokens` (chain REST) × USD price (cosmos.directory / CoinGecko) |
 | APR | cosmos.directory `calculated_apr` × (1 − validator commission) |
 | Staker / operator rewards per day | stake × chain APR ÷ 365, split by commission |
-| Delegations, undelegations, redelegations | On-chain transaction search (`delegate`, `unbond`, `redelegate` events) |
+| Delegations, undelegations, redelegations | On-chain transaction search (`delegate`, `unbond`, `redelegate` events); counterparty names from the chain's full validator set |
 | Unbonding complete | `completion_time` of each undelegation (falls back to the chain's unbonding period) |
 | Votes | `proposal_vote` events from the validator's own account |
 | Block height | Latest block of the selected network |
@@ -48,7 +48,6 @@ where the validator can't be found is hidden automatically.
 - **History depth** is whatever public nodes keep indexed: up to `history.pages × 100` transactions per event
   type (set in `config.js`). For full multi-year history, point `data.js` at an indexer.
 - **Past values** are rebuilt from today's stake minus later flows, valued at **today's** price. Slashing isn't modelled.
-- **Dymension** uses Ethereum-style keys, so staking opens Keplr's dashboard instead of signing in-page (`wallet: false`).
 - Public endpoints come and go. If a network fails to load it's left out and logged in the console as `[cybernetics]`.
 
 ## Tests

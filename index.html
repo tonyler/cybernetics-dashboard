@@ -59,18 +59,24 @@
   .stake-status a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
   .stake-status.err { color: #8a2c22; }
   .go[aria-busy="true"] { opacity: .6; pointer-events: none; }
+  .wallet-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 10px; font: 12px var(--mono); color: var(--dim); }
+  .wallet-row button { color: var(--dim); }
+  .wallet-row button:hover, .wallet-row u { color: var(--text); }
+  .wallet-row u { text-decoration: none; margin-left: 6px; padding: 2px 6px; border: 1px solid var(--line-2); border-radius: 4px; font-size: 11px; }
+  #wAddr { display: inline-flex; align-items: center; gap: 6px; }
+  #wAddr::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #1f9d55; }
 
   /* Identity */
-  .id { display: flex; align-items: center; gap: 28px; padding: 40px 0; border-bottom: 1px solid var(--line); }
-  .mark { position: relative; flex: none; width: 196px; display: block; overflow: hidden; }
+  .id { display: flex; align-items: center; gap: 24px; padding: 28px 0; border-bottom: 1px solid var(--line); }
+  .mark { position: relative; flex: none; width: 116px; display: block; overflow: hidden; }
   .mark img { display: block; width: 100%; height: auto; animation: boot 1.1s var(--ease) both; }
   .mark::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 34%; background: linear-gradient(transparent, #1111110d); border-bottom: 1px solid #11111140; transform: translateY(-110%); animation: scanY 1.6s 1s var(--ease) both; pointer-events: none; }
   @keyframes boot { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0); } }
   @keyframes scanY { to { transform: translateY(310%); } }
   .id h1 { margin: 0; line-height: 0; }
-  .word { width: min(400px, 100%); height: auto; animation: type 1s .5s steps(15, end) both; }
+  .word { width: min(300px, 100%); height: auto; animation: type 1s .5s steps(15, end) both; }
   @keyframes type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
-  .block { margin-top: 18px; font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 10px; }
+  .block { margin-top: 12px; font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 10px; }
   .led { position: relative; width: 6px; height: 6px; transform: rotate(45deg); background: var(--text); }
   .led.beat::after { content: ""; position: absolute; inset: 0; border: 1px solid var(--text); animation: ripple 1.2s ease-out both; }
   @keyframes ripple { to { transform: scale(3.2); opacity: 0; } }
@@ -99,12 +105,12 @@
   @keyframes wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
   @keyframes line { from { left: 0; } 90% { opacity: 1; } to { left: 100%; opacity: 0; } }
 
-  .seg { position: relative; isolation: isolate; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+  .seg { position: relative; isolation: isolate; display: flex; gap: 2px; padding: 2px; overflow-x: auto; scrollbar-width: none; }
   .seg .thumb { position: absolute; z-index: -1; top: 3px; bottom: 3px; left: 0; border-radius: 7px; background: var(--raise); box-shadow: 0 0 0 1px var(--line-2), 0 1px 2px #1111110f; transition: transform .4s var(--ease), width .4s var(--ease); pointer-events: none; }
   .seg button { flex: none; display: inline-flex; align-items: center; padding: 9px 12px; color: var(--dim); white-space: nowrap; transition: color .2s; }
   .seg button:hover, .seg [aria-pressed="true"] { color: var(--text); }
   .seg.mono button { font: 12px var(--mono); }
-  .lead { margin-left: -12px; }
+  .lead { margin-left: -14px; }
 
   .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-top: 24px; }
   .roll { display: inline-flex; white-space: pre; user-select: none; }
@@ -139,7 +145,13 @@
   .rows { margin-top: 20px; }
   .row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) 56px; gap: 20px; align-items: center; min-height: 58px; border-top: 1px solid var(--line); position: relative; }
   .row > :nth-child(3), .row > :last-child { text-align: right; }
-  .row .what { display: flex; align-items: center; gap: 12px; font-weight: 500; }
+  .row .what { display: flex; align-items: center; gap: 12px; font-weight: 500; min-width: 0; }
+  .row .what > div { min-width: 0; }
+  .row .title, .row .peer, .row .sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .title { font-weight: 500; }
+  .row .peer { margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--faint); }
+  .row .where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row div.num { white-space: nowrap; }
   .row .where, .row time { color: var(--dim); }
   .row time { font-size: 12px; }
   .ev-icon { width: 16px; height: 16px; flex: none; color: var(--text); fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
@@ -201,7 +213,7 @@
   @media (max-width: 720px) {
     .tabs { gap: 18px; }
     .id { gap: 16px; padding: 24px 0; flex-wrap: wrap; }
-    .mark { width: 112px; }
+    .mark { width: 84px; }
     .id > div { flex: 1; min-width: 0; }
     .block { margin-top: 12px; }
     .bar .wrap { gap: 8px; }
@@ -210,10 +222,11 @@
     .plot { height: 220px; margin-top: 24px; }
     .row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
     .row .where, .row time { display: none; }
-    .row .what .sub { display: block; }
+    .row .what .sub { display: block !important; }
+    .row .what .peer { display: none; }
     .panel { padding: 22px; }
   }
-  .row .sub { display: none; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--faint); }
+  .row .sub { display: none !important; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--faint); }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
   }
@@ -306,6 +319,7 @@
             <div class="filled">
               <div class="p-head"><img class="icon" id="pIcon" alt=""><b id="pName"></b><div class="p-apr"><span id="pApr"></span><small>APR</small></div></div>
               <label class="amount"><input id="amount" inputmode="decimal" value="100" aria-label="Amount"><span id="token"></span></label>
+              <div class="wallet-row" id="walletRow" hidden><button type="button" id="maxBtn"><span id="wBal"></span> <u>Max</u></button><span id="wAddr"></span></div>
               <div class="earn"><b id="pYear"></b><span>per year</span></div>
               <div class="proj"><svg id="projSvg" viewBox="0 0 300 84" preserveAspectRatio="none" aria-hidden="true"></svg><div class="dot" id="projEnd"></div></div>
               <div class="proj-axis"><span>Today</span><span>1 year</span></div>
@@ -547,10 +561,13 @@
       if (e.hash) { row.href = DATA.chains[e.chain].txUrl(e.hash); row.target = '_blank'; row.rel = 'noopener'; }
       row.className = 'row' + (e === fresh ? ' new' : '');
       const when = new Date(e.date), chain = DATA.chains[e.chain].name;
-      row.innerHTML = `<div class="what"><svg class="ev-icon${isOut(e) ? ' out' : ''}" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICON[e.type]}"/></svg><div><span></span><span class="sub"></span></div></div>
+      row.innerHTML = `<div class="what"><svg class="ev-icon${isOut(e) ? ' out' : ''}" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICON[e.type]}"/></svg><div><b class="title"></b><span class="peer"></span><span class="sub"></span></div></div>
         <div class="where"></div><div class="num"></div><time class="num"></time>`;
-      row.querySelector('.what span:not(.sub)').textContent = e.text;
-      row.querySelector('.sub').textContent = chain + ' · ' + ago(when);
+      const peer = e.type === 'redelegation' ? (e.dir === 'in' ? 'from ' : 'to ') + e.peerName : '';
+      row.querySelector('.title').textContent = e.text;
+      row.querySelector('.peer').textContent = peer;
+      row.querySelector('.peer').hidden = !peer;
+      row.querySelector('.sub').textContent = [chain, peer, ago(when)].filter(Boolean).join(' · ');
       row.querySelector('.where').textContent = chain;
       row.querySelector('div.num').textContent = e.detail;
       const unbondsAt = e.type === 'undelegation' && +new Date(e.unbondsAt || +when + DATA.chains[e.chain].unbonding * 864e5);
@@ -646,30 +663,70 @@
   }
   $('amount').addEventListener('input', () => { $('stakeStatus').textContent = ''; renderStake(false); });
 
-  const ARROW = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 10 10 2M4 2h6v6" stroke="currentColor" stroke-width="1.6"/></svg>';
+  /* Wallet: connect once, then the panel shows balance + Max and delegates in place. */
+  const W = window.CyberneticsWallet;
+  const wallet = { chainId: null, address: '', balance: null, busy: false };
+  const remember = v => { try { v ? localStorage.setItem('cyb.wallet', '1') : localStorage.removeItem('cyb.wallet'); } catch {} };
+  const remembered = () => { try { return localStorage.getItem('cyb.wallet') === '1'; } catch { return false; } };
+  const short = a => a.slice(0, 8) + '…' + a.slice(-4);
+  const feeReserve = c => { const m = /^([\d.]+)/.exec(c.gasPrice); return 400000 * (m ? +m[1] : 0.025) / 10 ** c.decimals; };
+  const fmtTok = (v, c) => v.toLocaleString('en-US', { maximumFractionDigits: v < 1 ? 6 : 2 }) + ' ' + c.token;
+
+  async function connectWallet(c, quiet) {
+    if (wallet.busy) return;
+    wallet.busy = true;
+    try {
+      const k = await W.connect(c);
+      Object.assign(wallet, { chainId: c.chainId, address: k.address, balance: null });
+      remember(true);
+      W.balance(c, k.address).then(b => { if (wallet.chainId === c.chainId) { wallet.balance = b.amount; renderStake(false); } }).catch(() => {});
+    } catch (err) {
+      if (!quiet) { const st = $('stakeStatus'); st.className = 'stake-status err'; st.textContent = err.message; }
+    } finally { wallet.busy = false; renderStake(false); }
+  }
+  addEventListener('keplr_keystorechange', () => { wallet.chainId = null; renderStake(false); });
+
   function stakeButton(c, amt) {
-    const go = $('go'), inPage = c.wallet && window.CyberneticsWallet.available();
-    go.dataset.mode = inPage ? 'wallet' : 'link';
-    if (inPage) {
-      go.href = '#'; go.removeAttribute('target');
-      go.setAttribute('aria-disabled', String(!(amt > 0)));
-      go.textContent = amt > 0 ? `Delegate ${amt.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${c.token}` : 'Enter an amount';
+    const go = $('go'), row = $('walletRow');
+    const connected = wallet.chainId === c.chainId && wallet.address;
+    row.hidden = !connected;
+    if (connected) {
+      $('wAddr').textContent = short(wallet.address); $('wAddr').title = wallet.address;
+      $('wBal').textContent = wallet.balance == null ? 'Balance …' : 'Balance ' + fmtTok(wallet.balance, c);
+    }
+    go.removeAttribute('target'); go.href = '#'; go.setAttribute('aria-disabled', 'false');
+    if (!W.available() || c.wallet === false) {
+      if (W.isMobile() && c.wallet !== false) { go.dataset.mode = 'app'; go.textContent = 'Open in Keplr to stake'; }
+      else { go.dataset.mode = 'link'; go.href = c.wallet === false ? c.keplrUrl : 'https://www.keplr.app/get'; go.target = '_blank';
+        go.textContent = c.wallet === false ? `Delegate on Keplr ↗` : 'Install Keplr to stake ↗'; }
+    } else if (!connected) {
+      go.dataset.mode = 'connect'; go.textContent = wallet.busy ? 'Connecting…' : 'Connect wallet';
+      if (remembered() && !wallet.busy) connectWallet(c, true);
     } else {
-      go.href = c.keplrUrl; go.target = '_blank';
-      go.setAttribute('aria-disabled', 'false');
-      go.innerHTML = `Delegate ${c.token} on Keplr ${ARROW}`;
+      const tooMuch = wallet.balance != null && amt > wallet.balance;
+      go.dataset.mode = 'wallet';
+      go.setAttribute('aria-disabled', String(!(amt > 0) || tooMuch));
+      go.textContent = tooMuch ? `Not enough ${c.token}` : amt > 0 ? `Delegate ${amt.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${c.token}` : 'Enter an amount';
     }
   }
+  $('maxBtn').addEventListener('click', () => {
+    const c = DATA.chains[state.chain]; if (!c || wallet.balance == null) return;
+    const max = Math.max(0, wallet.balance - feeReserve(c));
+    $('amount').value = String(+max.toFixed(Math.min(6, c.decimals)));
+    renderStake(false);
+  });
   $('go').addEventListener('click', async e => {
     const go = $('go'), c = DATA.chains[state.chain], status = $('stakeStatus');
-    if (go.dataset.mode !== 'wallet' || !c) return;
+    if (!c || go.dataset.mode === 'link') return;
     e.preventDefault();
+    if (go.dataset.mode === 'app') return W.openInApp();
     status.className = 'stake-status'; status.textContent = '';
+    if (go.dataset.mode === 'connect') return connectWallet(c);
     go.setAttribute('aria-busy', 'true'); go.textContent = 'Confirm in your wallet…';
     try {
-      const { hash } = await window.CyberneticsWallet.delegate(c, $('amount').value);
+      const { hash } = await W.delegate(c, $('amount').value);
       status.innerHTML = `Delegated. <a href="${c.txUrl(hash)}" target="_blank" rel="noopener">View transaction</a>`;
-      setTimeout(() => refreshChain(c), 8000);
+      setTimeout(() => { refreshChain(c); W.balance(c, wallet.address).then(b => { wallet.balance = b.amount; renderStake(false); }).catch(() => {}); }, 7000);
     } catch (err) {
       status.className = 'stake-status err'; status.textContent = err.message;
     } finally {

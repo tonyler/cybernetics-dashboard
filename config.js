@@ -8,7 +8,7 @@
            (Keybase) or `moniker`. A network where it can't be found is simply left out.
   keplr    Network slug on wallet.keplr.app, used when no browser wallet is installed.
   mintscan Network slug on mintscan.io, used for transaction links.
-  wallet   false = open Keplr's dashboard instead of signing in-page (e.g. EVM-key chains).
+  wallet   false = open Keplr's dashboard instead of signing in-page.
   gasPrice Optional override, e.g. '0.03uatom'. Default: the chain registry's average gas price.
 */
 window.CYBERNETICS = {
@@ -28,6 +28,6 @@ window.CYBERNETICS = {
     { id: 'chihuahua', registry: 'chihuahua', name: 'Chihuahua',  icon: 'assets/chains/chihuahua.webp', keplr: 'chihuahua',  mintscan: 'chihuahua',
       valoper: 'chihuahuavaloper1cjnwtpj27hpd3ztyuf43um5jgew63p9nh4jjd3' },
     { id: 'dymension', registry: 'dymension', name: 'Dymension',  icon: 'assets/chains/dymension.webp', keplr: 'dymension',  mintscan: 'dymension',
-      valoper: 'dymvaloper1x4dhky07zxuaew2ru7tgvtd68vjk3x56w5p5lh', wallet: false }
+      valoper: 'dymvaloper1x4dhky07zxuaew2ru7tgvtd68vjk3x56w5p5lh' }
   ]
 };

@@ -1,5 +1,6 @@
 /*
-  Stake: in-page delegation through a browser wallet (Keplr or Leap, which share the Keplr API).
+  Stake: connect a wallet and delegate in-page (Keplr or Leap, which share the Keplr API).
+  On a phone without an extension, openInApp() reopens this page inside the Keplr app's browser.
 
   No dependencies. Builds the delegation transaction itself (≈60 lines of protobuf), asks the
   wallet to sign it, then broadcasts it through the chain's public REST endpoint.
@@ -31,9 +32,11 @@
   const msgDelegate = (delegator, validator, amount) =>
     any('/cosmos.staking.v1beta1.MsgDelegate', msg(strField(1, delegator), strField(2, validator), bytesField(3, coin(amount))));
   const txBody = (messages, memo) => msg(...messages.map(m => bytesField(1, m)), strField(2, memo));
-  const pubKeyAny = key => any('/cosmos.crypto.secp256k1.PubKey', bytesField(1, key));
-  const authInfo = (pubKey, sequence, mode, fee) => msg(
-    bytesField(1, msg(bytesField(1, pubKeyAny(pubKey)), bytesField(2, bytesField(1, intField(1, mode))), intField(3, sequence))),
+  // Ethermint-based chains (e.g. Dymension) use eth_secp256k1 keys.
+  const PUBKEY_TYPE = { secp256k1: '/cosmos.crypto.secp256k1.PubKey', ethsecp256k1: '/ethermint.crypto.v1.ethsecp256k1.PubKey' };
+  const pubKeyAny = (key, algo = 'secp256k1') => any(PUBKEY_TYPE[algo] || PUBKEY_TYPE.secp256k1, bytesField(1, key));
+  const authInfo = (pubKey, sequence, mode, fee, algo) => msg(
+    bytesField(1, msg(bytesField(1, pubKeyAny(pubKey, algo)), bytesField(2, bytesField(1, intField(1, mode))), intField(3, sequence))),
     bytesField(2, msg(...fee.amount.map(c => bytesField(1, coin(c))), intField(2, fee.gas))));
   const txRaw = (body, auth, signature) => msg(bytesField(1, body), bytesField(2, auth), bytesField(3, signature));
 
@@ -78,18 +81,36 @@
     return m.length > 160 ? m.slice(0, 160) + '…' : m;
   }
 
-  async function delegate(chain, amountText) {
+  const isMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  // Keplr mobile opens the URL in its built-in browser, where window.keplr is available.
+  const openInApp = () => { location.href = 'keplrwallet://web-browser?url=' + encodeURIComponent(location.href); };
+
+  async function connect(chain) {
     const wallet = provider();
-    if (!wallet) throw new Error('No Cosmos wallet found. Install Keplr or Leap.');
+    if (!wallet) throw new Error('No Cosmos wallet found.');
     try {
-      const amount = { denom: chain.denom, amount: toBaseUnits(amountText, chain.decimals) };
       await wallet.enable(chain.chainId);
       const key = await wallet.getKey(chain.chainId);
-      const delegator = key.bech32Address, pubKey = key.pubKey;
+      return { address: key.bech32Address, name: key.name, algo: key.algo, ledger: !!key.isNanoLedger, pubKey: key.pubKey };
+    } catch (err) { throw new Error(friendly(err)); }
+  }
+
+  async function balance(chain, address) {
+    const { balance: b } = await rest(chain, `/cosmos/bank/v1beta1/balances/${address}/by_denom?denom=${encodeURIComponent(chain.denom)}`);
+    return { units: b?.amount || '0', amount: Number(b?.amount || 0) / 10 ** chain.decimals };
+  }
+
+  async function delegate(chain, amountText) {
+    const wallet = provider();
+    if (!wallet) throw new Error('No Cosmos wallet found.');
+    try {
+      const amount = { denom: chain.denom, amount: toBaseUnits(amountText, chain.decimals) };
+      const key = await connect(chain);
+      const delegator = key.address, pubKey = key.pubKey, algo = key.algo;
       const memo = window.CYBERNETICS?.memo || '';
 
-      const { balance } = await rest(chain, `/cosmos/bank/v1beta1/balances/${delegator}/by_denom?denom=${encodeURIComponent(chain.denom)}`).catch(() => ({}));
-      if (balance && BigInt(balance.amount) < BigInt(amount.amount)) throw new Error(`Not enough ${chain.token} in this wallet.`);
+      const bal = await balance(chain, delegator).catch(() => null);
+      if (bal && BigInt(bal.units) < BigInt(amount.amount)) throw new Error(`Not enough ${chain.token} in this wallet.`);
       const acct = findAccount(await rest(chain, `/cosmos/auth/v1beta1/accounts/${delegator}`));
       if (!acct) throw new Error('This wallet has no account on this network yet.');
 
@@ -97,14 +118,14 @@
       let gas = 300000;
       try {
         const sim = await rest(chain, '/cosmos/tx/v1beta1/simulate', {
-          tx_bytes: b64(txRaw(body, authInfo(pubKey, acct.sequence, DIRECT, feeFor(chain, gas)), new Uint8Array(64)))
+          tx_bytes: b64(txRaw(body, authInfo(pubKey, acct.sequence, DIRECT, feeFor(chain, gas), algo), new Uint8Array(64)))
         });
         gas = Math.ceil(Number(sim.gas_info.gas_used) * 1.4);
       } catch { /* keep the fallback */ }
       const fee = feeFor(chain, gas);
 
       let tx;
-      if (key.isNanoLedger) {
+      if (key.ledger) {
         const doc = {
           chain_id: chain.chainId, account_number: acct.accountNumber, sequence: acct.sequence, fee, memo,
           msgs: [{ type: 'cosmos-sdk/MsgDelegate', value: { delegator_address: delegator, validator_address: chain.valoper, amount } }]
@@ -112,10 +133,10 @@
         const { signed, signature } = await wallet.signAmino(chain.chainId, delegator, doc);
         const v = signed.msgs[0].value;
         tx = txRaw(txBody([msgDelegate(v.delegator_address, v.validator_address, v.amount)], signed.memo),
-          authInfo(pubKey, signed.sequence, AMINO, signed.fee), unb64(signature.signature));
+          authInfo(pubKey, signed.sequence, AMINO, signed.fee, algo), unb64(signature.signature));
       } else {
         const { signed, signature } = await wallet.signDirect(chain.chainId, delegator, {
-          bodyBytes: body, authInfoBytes: authInfo(pubKey, acct.sequence, DIRECT, fee),
+          bodyBytes: body, authInfoBytes: authInfo(pubKey, acct.sequence, DIRECT, fee, algo),
           chainId: chain.chainId, accountNumber: BigInt(acct.accountNumber)
         });
         tx = txRaw(signed.bodyBytes, signed.authInfoBytes, unb64(signature.signature));
@@ -131,7 +152,7 @@
 
   window.CyberneticsWallet = {
     available: () => !!provider(),
-    delegate,
+    isMobile, openInApp, connect, balance, delegate,
     // exposed for tests / tooling
     _encode: { msgDelegate, txBody, authInfo, txRaw, feeFor, toBaseUnits }
   };

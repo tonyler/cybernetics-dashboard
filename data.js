@@ -13,9 +13,10 @@
             type: delegation | undelegation | redelegation (dir: in|out) | unbonded | vote
     daily   [{ date, flows, staked, stakerRewards, operatorRewards }]   oldest first; each is { [chainId]: USD }
 
-  Used in two places:
-    - scripts/snapshot.mjs (GitHub Action, every 15 min) → data/snapshot.json, which every visitor reads.
-    - the browser, only as a fallback when there is no snapshot (local development).
+  Used by the server-side snapshot generator (scripts/snapshot.mjs) every 15 min.
+  GitHub Actions downloads the completed dataset via /scraper/snapshot and
+  publishes data/snapshot.json. Browsers use this module only for derived
+  chart calculations, not for automatic calls to chain APIs.
 
   Notes
     - Daily history uses the snapshot's recorded stake + price per day; before that, it is rebuilt from

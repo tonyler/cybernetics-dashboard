@@ -41,10 +41,10 @@ export function nolusApr(payload) {
 
 // Public third-party Nolus staking explorer reports distribution-derived APR,
 // not inflation-derived APR. Only used when the official app API fails.
-export function nolusExplorerApr(html) {
+export function stakingExplorerApr(html, chain) {
   if (typeof html !== 'string') throw Error('invalid explorer HTML');
-  const start = html.search(/Nolus staking APR/i);
-  if (start < 0) throw Error('explorer missing Nolus staking APR heading');
+  const start = html.search(new RegExp(chain + '\\s+staking APR', 'i'));
+  if (start < 0) throw Error('explorer missing '+chain+' staking APR heading');
   const section = html.slice(start, start + 1800)
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -53,6 +53,7 @@ export function nolusExplorerApr(html) {
   if (!found) throw Error('explorer has no explicit staking APR');
   return {grossApr: positivePercent(found[1]), source:'staking-explorer'};
 }
+export const nolusExplorerApr = html => stakingExplorerApr(html, 'Nolus');
 
 async function request(url, {fetchFn, format='json', headers={}}) {
   const ctl = new AbortController();
@@ -70,7 +71,13 @@ export async function externalApr(id, {fetchFn=fetch, now=Date.now(), base='', n
     const start = new Date(now-14*DAY).toISOString().slice(0,10);
     const url = (base?base+'/numia/apr':'https://public-osmosis-api.numia.xyz/apr')
       +'?start_date='+start+'&end_date='+end;
-    return numiaApr(await request(url,{fetchFn,headers:numiaKey?{Authorization:'Bearer '+numiaKey}:{}}),now);
+    try {
+      return numiaApr(await request(url,{fetchFn,headers:numiaKey?{Authorization:'Bearer '+numiaKey}:{}}),now);
+    } catch (primaryError) {
+      const fallback = base?base+'/staking-explorer/osmosis':'https://staking-explorer.com/explorer/osmosis';
+      try { return stakingExplorerApr(await request(fallback,{fetchFn,format:'text'}), 'Osmosis'); }
+      catch (secondaryError) { throw Error('Numia: '+primaryError.message+'; staking explorer: '+secondaryError.message); }
+    }
   }
   if (id==='nolus') {
     const url = base?base+'/nolus/api/governance/apr':'https://app.nolus.io/api/governance/apr';
@@ -89,7 +96,7 @@ export async function externalApr(id, {fetchFn=fetch, now=Date.now(), base='', n
 
 export function chooseApr(id,current,previous,reading,now=Date.now()) {
   if (!['osmosis','nolus'].includes(id)) return current;
-  const expected = id==='osmosis'?['numia']:['nolus','staking-explorer'];
+  const expected = id==='osmosis'?['numia','staking-explorer']:['nolus','staking-explorer'];
   const c={...current,apr:null,chainApr:null,aprSource:null,aprFetchedAt:null,aprAsOf:null};
   if (reading && expected.includes(reading.source) && Number.isFinite(reading.grossApr) && reading.grossApr>0) {
     c.chainApr=reading.grossApr/100;

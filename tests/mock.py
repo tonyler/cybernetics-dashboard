@@ -28,7 +28,7 @@ iso=lambda s: datetime.datetime.utcfromtimestamp(now-s).strftime('%Y-%m-%dT%H:%M
 fut=lambda s: datetime.datetime.utcfromtimestamp(now+s).strftime('%Y-%m-%dT%H:%M:%S.000000000Z')
 D=86400
 
-CG_PRICE={'cosmos':4.4,'osmosis':0.48,'juno-network':0.21,'dymension':1.25}
+CG_PRICE={'cosmos':4.4,'osmosis':0.48,'juno-network':0.21,'dymension':1.25,'nolus':0.01}
 def chain(name, cid, sym, denom, dec, hrp, apr, unb, price, display):
     return {'repository':{}, 'chain':{'chain_name':name,'chain_id':cid,'pretty_name':name.title(),'bech32_prefix':hrp,'symbol':sym,'display':display,
       'denom':denom,'decimals':dec,'coingecko_id':{'cosmoshub':'cosmos','osmosis':'osmosis','juno':'juno-network','dymension':'dymension','nolus':'nolus'}[name],'params':{'calculated_apr':apr,'unbonding_time':unb},'prices':{'coingecko':{display:{'usd':price}}},

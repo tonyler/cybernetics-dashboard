@@ -9,11 +9,11 @@ test('Numia uses newest total staking APR, not earlier inflation-only components
     {symbol:'OSMO',labels:'2026-11-18 00:00:00',apr:5.2},
     {symbol:'total',labels:'2026-11-18 00:00:00',apr:5.2}
   ];
-  assert.deepEqual(numiaApr(rows,NOW), {grossApr:5.2,asOf:'2026-11-18',source:'numia'});
+  assert.deepEqual(numiaApr(rows,NOW), {grossApr:5.2,source:'numia',asOf:'2026-11-18'});
 });
 test('Numia rejects missing or stale data', () => {
   assert.throws(() => numiaApr([{symbol:'ATOM',labels:'2026-11-18',apr:9}],NOW));
-  assert.throws(() => numiaApr([{symbol:'total',labels:'2026-11-01',apr:9}],NOW),/stale/);
+  assert.throws(() => numiaApr([{symbol:'total',labels:'2026-11-01',apr:9}],NOW),/recent positive/);
   assert.throws(() => numiaApr([{symbol:'total',labels:'2026-11-18',apr:-1}],NOW),/recent positive/);
   assert.throws(() => numiaApr([{symbol:'total',labels:'2026-11-18',apr:0}],NOW),/recent positive/);
 });

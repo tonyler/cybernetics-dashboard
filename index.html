@@ -832,33 +832,6 @@
     });
     row.querySelector('.up-grid').setAttribute('aria-label', `${c.name}: ${missed} missed of the last ${seen} blocks`);
   }
-  async function fillBlocks(c, heights) {
-    const u = up[c.id], queue = [...heights];
-    await Promise.all(Array.from({ length: 6 }, async () => {
-      while (queue.length) {
-        const h = queue.pop();
-        try { u.blocks.set(h, (await window.CyberneticsData.commit(c, h)).signed); } catch {}
-        if (state.view === 'uptime') drawUptime(c);
-      }
-    }));
-  }
-  async function syncUptime(c) {
-    const u = up[c.id] ??= { blocks: new Map(), latest: 0, stats: null, busy: false };
-    if (u.busy) return; u.busy = true;
-    try {
-      if (!u.stats && DATA.uptime?.[c.id]) u.stats = DATA.uptime[c.id];          // from the snapshot
-      if (!u.stats && !DATA.uptime) window.CyberneticsData.signingStats(c).then(st => { u.stats = st; drawUptime(c); }).catch(() => {});
-      const top = await window.CyberneticsData.commit(c);
-      const prev = u.latest, fresh = [];
-      u.blocks.set(top.height, top.signed); u.latest = Math.max(u.latest, top.height);
-      for (const h of u.blocks.keys()) if (h <= u.latest - BLOCKS) u.blocks.delete(h);
-      if (prev) for (let h = prev + 1; h <= u.latest; h++) fresh.push(h);
-      drawUptime(c, fresh);
-      const missing = [];
-      for (let h = u.latest - BLOCKS + 1; h < u.latest; h++) if (!u.blocks.has(h)) missing.push(h);
-      await fillBlocks(c, missing);
-    } catch {} finally { u.busy = false; }
-  }
   const upChains = () => state.chain === 'all' ? Object.values(DATA.chains) : [DATA.chains[state.chain]].filter(Boolean);
   // Signing blocks are supplied by the server snapshot (15-minute refresh).
   function tickUptime() { upChains().forEach(c => { if (up[c.id]) drawUptime(c); }); }

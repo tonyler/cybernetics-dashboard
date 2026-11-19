@@ -51,7 +51,7 @@ async function previous() {
 
 const prev = await previous();
 const days = CFG.history?.days ?? 90;
-const chains = { ...(prev?.chains || {}) };          // keep last known values for a network that fails this run
+const chains = Object.fromEntries(Object.entries(prev?.chains || {}).map(([id, c]) => [id, { ...c }])); // preserve previous APR metadata for safe fallback
 const events = new Map((prev?.events || []).map(e => [e.key, e]));
 const coverage = { ...(prev?.coverage || {}) }, completeNow = new Set(), fresh = new Set();
 console.log(prev ? `previous snapshot: ${prev.generatedAt}, ${prev.events.length} events` : 'no previous snapshot: full fetch');

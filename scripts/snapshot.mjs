@@ -111,12 +111,12 @@ for (const id of fresh) {
 await Promise.all(['osmosis', 'nolus'].filter(id => chains[id]).map(async id => {
   let reading = null, error = null;
   try {
-    if (fresh.has(id)) {
-      reading = await externalApr(id, {
-        base: process.env.API_BASE?.replace(/\/$/, '') || '',
-        numiaKey: process.env.NUMIA_API_KEY || ''
-      });
-    } else error = 'On-chain validator data unavailable';
+    // APR APIs are independent of chain REST freshness. A cached validator
+    // still deserves an APR refresh when its on-chain endpoint is temporarily down.
+    reading = await externalApr(id, {
+      base: process.env.API_BASE?.replace(/\/$/, '') || '',
+      numiaKey: process.env.NUMIA_API_KEY || ''
+    });
   } catch (err) {
     error = err.message;
     console.warn(`  ${id}: external APR unavailable (${error})`);

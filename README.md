@@ -25,6 +25,8 @@ while it's open) and the visitor's own wallet when they stake.
 
 1. **Settings → Pages → Source: GitHub Actions.**
 2. Push to `main` (or Actions → *Snapshot and deploy* → Run workflow). The site redeploys every 15 minutes.
+3. Optional: add a free CoinGecko demo key as the repository secret `COINGECKO_API_KEY` (Settings → Secrets and
+   variables → Actions) if the public price API ever rate-limits the job.
 
 GitHub pauses scheduled workflows in repositories with no activity for 60 days; re-enable it under Actions if so.
 
@@ -60,9 +62,10 @@ where the validator can't be found is hidden automatically.
 
 | Shown | Source |
 |---|---|
-| Total staked | Validator `tokens` (chain REST) × USD price (cosmos.directory / CoinGecko) |
-| APR | cosmos.directory `calculated_apr` × (1 − validator commission) |
-| Staker / operator rewards per day | stake × chain APR ÷ 365, split by commission |
+| Total staked | Validator `tokens` (chain REST) × USD price |
+| Prices | CoinGecko: current price each run, 90 days of daily prices once a day (token id from the chain registry) |
+| APR | **Measured**: one real delegation per network is followed between runs; reward growth ÷ stake ÷ time, averaged over 24 h. Net of commission, fees included. Falls back to cosmos.directory `calculated_apr` × (1 − commission) until two readings exist. |
+| Staker / operator rewards per day | stake × APR ÷ 365 for stakers; the operator's commission is the rest of the gross; each day at that day's price |
 | Delegations, undelegations, redelegations | On-chain transaction search (`delegate`, `unbond`, `redelegate` events); counterparty names from the chain's full validator set |
 | Unbonding complete | `completion_time` of each undelegation (falls back to the chain's unbonding period) |
 | Votes | `proposal_vote` events from the validator's own account |

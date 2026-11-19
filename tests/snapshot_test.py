@@ -5,7 +5,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tests')); import mock
 from playwright.async_api import async_playwright
 
-HOSTS = {'chains': 'https://chains.cosmos.directory', 'validators': 'https://validators.cosmos.directory', 'rest': 'https://rest.cosmos.directory', 'rpc': 'https://rpc.cosmos.directory'}
+HOSTS = {'coingecko': 'https://api.coingecko.com', 'chains': 'https://chains.cosmos.directory', 'validators': 'https://validators.cosmos.directory', 'rest': 'https://rest.cosmos.directory', 'rpc': 'https://rpc.cosmos.directory'}
 class Fake:
     """Adapts mock.handle (written for Playwright routes) to a plain HTTP server."""
     def __init__(self, url, method, body): self.request = type('R', (), {'url': url, 'method': method, 'post_data': body})(); self.out = (404, b'{}')
@@ -37,8 +37,14 @@ async def main():
     start(Static, 8766)
     print('run 1 (empty):'); mock.search_calls.clear(); snapshot(); first = max(c[2] for c in mock.search_calls)
     snap = json.loads((ROOT / 'data' / 'snapshot.json').read_text())
-    print(f"  networks {list(snap['chains'])}, uptime {[round(u['uptime'] * 100, 2) for u in snap['uptime'].values()]}, history days {list(snap['history'])}")
+    print(f"  networks {list(snap['chains'])}, uptime {[round(u['uptime'] * 100, 2) for u in snap['uptime'].values()]}, history {len(snap['history'])} days")
+    import time; time.sleep(2)
     print('run 2 (incremental):'); mock.search_calls.clear(); snapshot(); second = max(c[2] for c in mock.search_calls)
+    snap = json.loads((ROOT / 'data' / 'snapshot.json').read_text())
+    aprs = {k: round(c['apr'], 2) for k, c in snap['chains'].items()}
+    priced = sorted(d for d, v in snap['history'].items() if all('price' in x for x in v.values()))
+    print(f"measured APR {aprs} (mock pays 15%)", 'OK' if all(abs(a - 15) < 0.3 for a in aprs.values()) and all(c.get('aprMeasured') for c in snap['chains'].values()) else 'FAIL')
+    print(f"CoinGecko: price now cosmos ${snap['chains']['cosmos']['price']}, daily prices for {len(priced)} days", 'OK' if snap['chains']['cosmos']['price'] == 4.4 and len(priced) >= 90 else 'FAIL')
     print(f'deepest page fetched: run 1 = {first}, run 2 = {second} (only what is new)', 'OK' if first > 5 and second == 1 else 'FAIL')
 
     async with async_playwright() as p:

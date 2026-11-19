@@ -27,9 +27,10 @@ iso=lambda s: datetime.datetime.utcfromtimestamp(now-s).strftime('%Y-%m-%dT%H:%M
 fut=lambda s: datetime.datetime.utcfromtimestamp(now+s).strftime('%Y-%m-%dT%H:%M:%S.000000000Z')
 D=86400
 
+CG_PRICE={'cosmos':4.4,'osmosis':0.48,'juno-network':0.21,'dymension':1.25}
 def chain(name, cid, sym, denom, dec, hrp, apr, unb, price, display):
     return {'repository':{}, 'chain':{'chain_name':name,'chain_id':cid,'pretty_name':name.title(),'bech32_prefix':hrp,'symbol':sym,'display':display,
-      'denom':denom,'decimals':dec,'params':{'calculated_apr':apr,'unbonding_time':unb},'prices':{'coingecko':{display:{'usd':price}}},
+      'denom':denom,'decimals':dec,'coingecko_id':{'cosmoshub':'cosmos','osmosis':'osmosis','juno':'juno-network','dymension':'dymension','nolus':'nolus'}[name],'params':{'calculated_apr':apr,'unbonding_time':unb},'prices':{'coingecko':{display:{'usd':price}}},
       'fees':{'fee_tokens':[{'denom':denom,'low_gas_price':0.005,'average_gas_price':0.025}]}}}
 CHAINS={
  'cosmoshub':chain('cosmoshub','cosmoshub-4','ATOM','uatom',6,'cosmos',0.1973,1814400,4.5,'atom'),
@@ -101,6 +102,14 @@ def handle(route):
         if n=='juno': return ok({'name':'juno','validators':[{'moniker':'Other','identity':'X','operator_address':bech('junovaloper',[1]*32)},{'moniker':'The_Cybernetics','identity':'AB3DA9B8891D4F85','operator_address':JUNO_VAL}]})
         if n=='nolus': return ok({'name':'nolus','validators':[{'moniker':'Someone','identity':'Y','operator_address':'nolusvaloper1zz'}]})
         return ok({'validators':[]})
+    if p.hostname=='api.coingecko.com':
+        if path.endswith('/simple/price'):
+            return ok({cid:{'usd':CG_PRICE[cid]} for cid in qs['ids'][0].split(',') if cid in CG_PRICE})
+        m=re.match(r'/api/v3/coins/([\w-]+)/market_chart', path)
+        if m and m.group(1) in CG_PRICE:
+            d0=int(now//D)*D
+            return ok({'prices':[[ (d0-k*D)*1000, CG_PRICE[m.group(1)]*(1+0.002*k) ] for k in range(int(qs['days'][0]),-1,-1)]})
+        return ok({'error':'unknown'},404)
     if p.hostname=='rpc.cosmos.directory':
         n=path.split('/')[1]
         if path.endswith('/commit'):
@@ -114,12 +123,21 @@ def handle(route):
             return ok({'jsonrpc':'2.0','id':-1,'result':{'signed_header':{'header':{'height':str(h),'time':iso(0)},'commit':{'height':str(h),'signatures':sigs}},'canonical':True}})
     if p.hostname=='rest.cosmos.directory':
         n=path.split('/')[1]; rest='/'+'/'.join(path.split('/')[2:])
-        m=re.match(r'/cosmos/staking/v1beta1/validators/(.+)', rest)
+        m=re.match(r'/cosmos/staking/v1beta1/validators/([^/]+)$', rest)
         if m:
             v=VALS.get(n,{}).get(m.group(1))
             if not v: return ok({'code':5,'message':'not found'},404)
             return ok({'validator':{'operator_address':m.group(1),'jailed':False,'status':'BOND_STATUS_BONDED','tokens':v[1],'description':{'moniker':v[0]},
                 'consensus_pubkey':{'@type':'/cosmos.crypto.ed25519.PubKey','key':consensus_key(m.group(1))},'commission':{'commission_rates':{'rate':v[2]}}}})
+        m=re.match(r'/cosmos/staking/v1beta1/validators/([^/]+)/delegations$', rest)
+        if m: return ok({'delegation_responses':[{'delegation':{'delegator_address':'probe-small'},'balance':{'amount':'1000000'}},
+                                                 {'delegation':{'delegator_address':'probe-big','validator_address':m.group(1)},'balance':{'amount':'500000000000'}}]})
+        m=re.match(r'/cosmos/staking/v1beta1/validators/([^/]+)/delegations/([^/]+)$', rest)
+        if m: return ok({'delegation_response':{'balance':{'amount':'500000000000'}}})
+        m=re.match(r'/cosmos/distribution/v1beta1/delegators/([^/]+)/rewards/([^/]+)$', rest)
+        if m:   # 15%/yr net, accruing in real time since the mock started
+            denom=[c['chain']['denom'] for c in CHAINS.values() if m.group(2).startswith(c['chain']['bech32_prefix'])][0]
+            return ok({'rewards':[{'denom':denom,'amount':'%.18f'%(500000000000*0.15*(time.time()-now)/(365*D))}]})
         if rest=='/cosmos/staking/v1beta1/validators':
             return ok({'validators':[{'operator_address':a,'description':{'moniker':v[0]}} for a,v in VALS.get(n,{}).items()],'pagination':{'next_key':None}})
         if rest.startswith('/cosmos/slashing/v1beta1/signing_infos/'):

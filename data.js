@@ -237,6 +237,7 @@
       tokens: Number(v.tokens) / 10 ** decimals, commission, chainApr,
       apr: chainApr == null ? null : chainApr * (1 - commission) * 100,     // what a delegator earns
       price: prices[meta.display]?.usd ?? prices[String(meta.symbol).toLowerCase()]?.usd ?? 0,
+      coingeckoId: cfg.coingecko || meta.coingecko_id || null,
       unbonding: Math.round((meta.params?.unbonding_time ?? 21 * 86400) / 86400),
       rpc: API.rpc + cfg.registry,
       gasPrice: cfg.gasPrice || gasString(fee.average_gas_price ?? fee.low_gas_price ?? fee.fixed_min_gas_price ?? 0.025, meta.denom),
@@ -248,8 +249,8 @@
     return { chain: c, monikers };
   }
 
-  // history[YYYY-MM-DD][chainId] = { tokens, price } recorded by the snapshot job: where present, that day uses
-  // the real recorded stake and price; otherwise it's rebuilt from today's stake minus later flows at today's price.
+  // history[YYYY-MM-DD][chainId] = { tokens?, price? } from the snapshot job (recorded stake; CoinGecko daily price).
+  // Where present that day uses them; otherwise stake is rebuilt from today's minus later flows, at today's price.
   function buildDaily(chains, events, history = {}) {
     const days = CFG.history?.days ?? 90;
     const today = new Date(); today.setUTCHours(0, 0, 0, 0);
@@ -268,12 +269,14 @@
       let later = 0;                                   // net flow after day i
       for (let i = days - 1; i >= 0; i--) {
         const rec = history[daily[i].date.slice(0, 10)]?.[c.id];
-        const staked = rec ? rec.tokens : Math.max(0, c.tokens - later), price = rec?.price ?? c.price;
-        const perDay = staked * (c.chainApr || 0) / 365;
+        const staked = rec?.tokens ?? Math.max(0, c.tokens - later), price = rec?.price ?? c.price;
+        // c.apr is what delegators earn (after commission); the validator's commission is the rest of the gross.
+        const stakers = staked * (c.apr || 0) / 100 / 365;
+        const operator = c.commission < 1 ? stakers * c.commission / (1 - c.commission) : 0;
         daily[i].flows[c.id] = net[i] * price;
         daily[i].staked[c.id] = staked * price;
-        daily[i].operatorRewards[c.id] = perDay * c.commission * price;
-        daily[i].stakerRewards[c.id] = perDay * (1 - c.commission) * price;
+        daily[i].stakerRewards[c.id] = stakers * price;
+        daily[i].operatorRewards[c.id] = operator * price;
         later += net[i];
       }
     }
@@ -346,5 +349,6 @@
     return { window, missed, uptime: window ? 1 - missed / window : null };
   }
 
-  window.CyberneticsData = { load, recent, buildDaily, commit, signingStats, FLOW_TYPES };
+  const rest = (c, path, ms) => get(`${API.rest}${c.registry}${path}`, ms);
+  window.CyberneticsData = { load, recent, buildDaily, commit, signingStats, rest, FLOW_TYPES };
 })();

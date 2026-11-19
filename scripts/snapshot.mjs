@@ -10,6 +10,7 @@
 
   Env: SITE_URL   deployed site, to read the previous snapshot from (set by the workflow)
        OUT        output path (default data/snapshot.json)
+       COINGECKO_API_KEY  optional CoinGecko demo key (repository secret), for higher rate limits
        API_BASE   test-only: route all API calls to a local mock
 */
 import fs from 'node:fs';
@@ -30,6 +31,7 @@ if (process.env.API_BASE) {
   const b = process.env.API_BASE.replace(/\/$/, '');
   CFG.api = { chains: `${b}/chains/`, validators: `${b}/validators/chains/`, rest: `${b}/rest/`, rpc: `${b}/rpc/` };
 }
+const COINGECKO = process.env.API_BASE ? process.env.API_BASE.replace(/\/$/, '') + '/coingecko/api/v3' : 'https://api.coingecko.com/api/v3';
 run('data.js');
 const D = window.CyberneticsData;
 
@@ -64,10 +66,73 @@ await Promise.all([...fresh].map(async id => {
   try { uptime[id] = await D.signingStats(chains[id]); } catch (err) { console.warn(`  ${id}: uptime failed (${err.message})`); }
 }));
 
-// Today's real stake and price, per network.
+/* ── Prices (CoinGecko) ──
+   Current USD price for every network in one request; once a day, 90 days of daily prices per token,
+   so each day's stake and rewards are valued at that day's price. */
 const today = new Date().toISOString().slice(0, 10), history = { ...(prev?.history || {}) };
+const cgHeaders = process.env.COINGECKO_API_KEY ? { 'x-cg-demo-api-key': process.env.COINGECKO_API_KEY } : {};
+const cg = async p => { const r = await fetch(COINGECKO + p, { headers: cgHeaders }); if (!r.ok) throw new Error(`CoinGecko ${r.status}`); return r.json(); };
+const ids = [...new Set([...fresh].map(id => chains[id].coingeckoId).filter(Boolean))];
+try {
+  const now = await cg(`/simple/price?ids=${ids.join(',')}&vs_currencies=usd`);
+  for (const id of fresh) { const p = now[chains[id].coingeckoId]?.usd; if (p) chains[id].price = p; }
+} catch (err) { console.warn(`  prices: ${err.message} (keeping cosmos.directory prices)`); }
+const pricesDay = prev?.pricesDay;
+if (pricesDay !== today) {
+  let ok = true;
+  for (const id of fresh) {
+    const coin = chains[id].coingeckoId; if (!coin) continue;
+    try {
+      const { prices } = await cg(`/coins/${coin}/market_chart?vs_currency=usd&days=${days}&interval=daily`);
+      for (const [ms, usd] of prices) { const d = new Date(ms).toISOString().slice(0, 10); (history[d] ??= {})[id] = { ...(history[d]?.[id] || {}), price: usd }; }
+    } catch (err) { ok = false; console.warn(`  ${id}: price history ${err.message}`); }
+    await new Promise(r => setTimeout(r, process.env.API_BASE ? 0 : 2500));   // stay under the free rate limit
+  }
+  if (ok) console.log(`  price history: ${days} days for ${ids.length} tokens`);
+  var pricesUpdated = ok ? today : pricesDay;
+}
+
+/* ── Measured APR ──
+   Follow one real delegation per network: the growth of its pending rewards between runs, divided by its stake
+   and the time elapsed, is what delegators actually earn (after commission, fees included). Pairs where the
+   stake changed or rewards were withdrawn are skipped; the rate is averaged over the last 24 hours. */
+const aprState = { ...(prev?.aprState || {}) };
+await Promise.all([...fresh].map(async id => {
+  const c = chains[id], st = aprState[id] ??= { probe: null, samples: [] };
+  try {
+    if (!st.probe) {
+      const r = await D.rest(c, `/cosmos/staking/v1beta1/validators/${c.valoper}/delegations?pagination.limit=20`);
+      const best = (r.delegation_responses || []).sort((a, b) => Number(b.balance.amount) - Number(a.balance.amount))[0];
+      if (!best) throw new Error('no delegations');
+      st.probe = best.delegation.delegator_address; st.samples = [];
+    }
+    const [del, rew] = await Promise.all([
+      D.rest(c, `/cosmos/staking/v1beta1/validators/${c.valoper}/delegations/${st.probe}`),
+      D.rest(c, `/cosmos/distribution/v1beta1/delegators/${st.probe}/rewards/${c.valoper}`)
+    ]);
+    const stake = Number(del.delegation_response.balance.amount);
+    const reward = Number((rew.rewards || []).find(x => x.denom === c.denom)?.amount || 0);
+    if (!stake) { st.probe = null; throw new Error('probe delegation gone'); }
+    st.samples = [...st.samples, { t: Date.now(), stake, reward }].filter(x => Date.now() - x.t < 26 * 3600e3);
+    let earned = 0, stakeTime = 0;
+    for (let i = 1; i < st.samples.length; i++) {
+      const a = st.samples[i - 1], b = st.samples[i];
+      if (b.stake !== a.stake || b.reward < a.reward) continue;
+      earned += b.reward - a.reward; stakeTime += a.stake * (b.t - a.t);
+    }
+    if (stakeTime > 0) {
+      c.aprEstimated = c.apr;
+      c.apr = earned / stakeTime * 365 * 864e5 * 100;
+      c.aprMeasured = true;
+    }
+  } catch (err) { console.warn(`  ${id}: measured APR ${err.message}`); }
+  if (!c.aprMeasured && prev?.chains?.[id]?.aprMeasured) { c.apr = prev.chains[id].apr; c.aprMeasured = true; }   // keep last good value
+  console.log(`  ${id}: APR ${c.apr == null ? '—' : c.apr.toFixed(2) + '%'}${c.aprMeasured ? ' (measured)' : ' (estimated)'}, $${c.price}`);
+}));
+
+// Today's stake, per network (prices per day come from CoinGecko above).
 history[today] = { ...(history[today] || {}) };
-for (const id of fresh) history[today][id] = { tokens: chains[id].tokens, price: chains[id].price };
+for (const id of fresh) history[today][id] = { ...(history[today][id] || {}), tokens: chains[id].tokens, price: chains[id].price };
 for (const d of Object.keys(history)) if (Date.now() - Date.parse(d) > HISTORY_DAYS * 864e5) delete history[d];
 
 const keepFrom = Date.now() - (days + 7) * 864e5;
@@ -75,7 +140,7 @@ const list = [...events.values()].filter(e => Date.parse(e.date) >= keepFrom).so
 for (const id of completeNow) coverage[id] = { complete: true, newest: list.find(e => e.chain === id && e.type !== 'unbonded')?.date };
 
 const skip = new Set(['names', 'hexAddress', 'valcons', 'legacySearch', 'peer']);
-const snapshot = { generatedAt: new Date().toISOString(), chains, events: list, coverage, uptime, history };
+const snapshot = { generatedAt: new Date().toISOString(), chains, events: list, coverage, uptime, history, aprState, pricesDay: pricesUpdated ?? pricesDay };
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, JSON.stringify(snapshot, (k, v) => skip.has(k) ? undefined : v));
 console.log(`wrote ${path.relative(ROOT, OUT)}: ${Object.keys(chains).length} networks, ${list.length} events, ${(fs.statSync(OUT).size / 1024).toFixed(0)} KB`);

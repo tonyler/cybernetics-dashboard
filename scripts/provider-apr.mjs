@@ -16,8 +16,9 @@ export function numiaApr(rows, now = Date.now()) {
   const candidates = rows.filter(r => r && (r.symbol === 'total' || r.symbol === 'OSMO'))
     .map(r => ({ date: String(r.labels || '').slice(0, 10), symbol: r.symbol, apr: r.apr }))
     .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r.date) && Number.isFinite(Date.parse(r.date)));
-  candidates.sort((a, b) => b.date.localeCompare(a.date) || (a.symbol === 'total' ? -1 : 1));
-  const latest = candidates[0];
+  const totals = candidates.filter(r => r.symbol === 'total');
+  (totals.length ? totals : candidates).sort((a, b) => b.date.localeCompare(a.date));
+  const latest = (totals.length ? totals : candidates)[0];
   if (!latest) throw new Error('Numia has no OSMO total APR');
   // A daily APR is dated to its observation day; allow Numia's next-day publication delay.
   const t = Date.parse(latest.date);
@@ -78,8 +79,8 @@ export function chooseApr(id, current, previous, reading, now = Date.now()) {
   const age = now - Date.parse(previous?.aprFetchedAt || '');
   if (previous?.aprSource === c.aprSource && Number.isFinite(age) && age >= 0 && age < MAX_CACHED_AGE &&
       Number.isFinite(previous.apr) && Number.isFinite(previous.chainApr)) {
-    c.apr = previous.apr;
     c.chainApr = previous.chainApr;
+    c.apr = previous.chainApr * 100 * (1 - c.commission);
     c.aprFetchedAt = previous.aprFetchedAt;
     c.aprAsOf = previous.aprAsOf || previous.aprFetchedAt;
   }

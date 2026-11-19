@@ -40,8 +40,9 @@ where the validator can't be found is hidden automatically.
 | Delegations, undelegations, redelegations | On-chain transaction search (`delegate`, `unbond`, `redelegate` events); counterparty names from the chain's full validator set |
 | Unbonding complete | `completion_time` of each undelegation (falls back to the chain's unbonding period) |
 | Votes | `proposal_vote` events from the validator's own account |
-| Block height | Latest block of the selected network |
-| Live updates | Block height every 6 s, new transactions every 60 s |
+| Uptime grid | Last 50 block commits (RPC `/commit`): signed if the validator's precommit is present |
+| Uptime % | Slashing `missed_blocks_counter` over `signed_blocks_window` |
+| Live updates | Uptime every 6 s while the tab is open, new transactions every 60 s |
 
 ### Known limits
 

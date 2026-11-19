@@ -3,8 +3,8 @@
 
     chains.cosmos.directory/<chain>              chain id, token, decimals, APR, unbonding time, USD price, fees
     validators.cosmos.directory/chains/<chain>   finds the validator by Keybase identity / moniker (only if not pinned)
-    rest.cosmos.directory/<chain>                validator stake + commission, transaction search, latest block
-    rpc.cosmos.directory/<chain>                 used by wallet.js to broadcast delegations
+    rest.cosmos.directory/<chain>                validator stake + commission, transaction search, slashing (uptime window)
+    rpc.cosmos.directory/<chain>                 block commits (which validators signed each block)
 
   Output (what index.html renders):
     chains  { [id]: { name, token, icon, apr, chainApr, commission, unbonding, tokens, price, decimals, denom,
@@ -51,12 +51,18 @@
     }
     return chk;
   }
-  function withPrefix(address, hrp) {
-    const data = [...address.slice(address.lastIndexOf('1') + 1, -6)].map(c => CHARSET.indexOf(c));
+  function bech32(hrp, words) {
     const expanded = [...[...hrp].map(c => c.charCodeAt(0) >> 5), 0, ...[...hrp].map(c => c.charCodeAt(0) & 31)];
-    const mod = polymod([...expanded, ...data, 0, 0, 0, 0, 0, 0]) ^ 1;
+    const mod = polymod([...expanded, ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
     const checksum = Array.from({ length: 6 }, (_, i) => (mod >> (5 * (5 - i))) & 31);
-    return hrp + '1' + [...data, ...checksum].map(d => CHARSET[d]).join('');
+    return hrp + '1' + [...words, ...checksum].map(d => CHARSET[d]).join('');
+  }
+  const withPrefix = (address, hrp) => bech32(hrp, [...address.slice(address.lastIndexOf('1') + 1, -6)].map(c => CHARSET.indexOf(c)));
+  function toWords(bytes) {
+    const out = []; let acc = 0, bits = 0;
+    for (const b of bytes) { acc = (acc << 8) | b; bits += 8; while (bits >= 5) { bits -= 5; out.push((acc >> bits) & 31); } }
+    if (bits) out.push((acc << (5 - bits)) & 31);
+    return out;
   }
 
   /* ── Formatting shared with the UI ── */
@@ -207,6 +213,7 @@
       id: cfg.id, registry: cfg.registry, name: cfg.name || meta.pretty_name, icon: cfg.icon,
       token: meta.symbol, denom: meta.denom, decimals, chainId: meta.chain_id, valoper,
       account: withPrefix(valoper, meta.bech32_prefix),
+      prefix: meta.bech32_prefix, consensusKey: v.consensus_pubkey?.key, active: v.status === 'BOND_STATUS_BONDED',
       tokens: Number(v.tokens) / 10 ** decimals, commission, chainApr,
       apr: chainApr == null ? null : chainApr * (1 - commission) * 100,     // what a delegator earns
       price: prices[meta.display]?.usd ?? prices[String(meta.symbol).toLowerCase()]?.usd ?? 0,
@@ -269,10 +276,37 @@
     return events;
   }
 
-  async function height(c) {
-    const r = await get(`${API.rest}${c.registry}/cosmos/base/tendermint/v1beta1/blocks/latest`, 8000);
-    return Number((r.sdk_block || r.block).header.height);
+  /* ── Uptime ──
+     A block is "signed" when the validator's precommit is in that block's commit. The validator is
+     identified there by the first 20 bytes of sha256(consensus public key). */
+  async function signer(c) {
+    if (!c.hexAddress) {
+      const key = Uint8Array.from(atob(c.consensusKey), ch => ch.charCodeAt(0));
+      const addr = new Uint8Array(await crypto.subtle.digest('SHA-256', key)).slice(0, 20);
+      c.hexAddress = [...addr].map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+      c.valcons = bech32(c.prefix + 'valcons', toWords(addr));
+    }
+    return c;
+  }
+  // { height, signed } for one block (latest when height is omitted). Small: header + signatures only.
+  async function commit(c, height) {
+    await signer(c);
+    const r = await get(`${API.rpc}${c.registry}/commit${height ? '?height=' + height : ''}`, 10000);
+    const sh = (r.result || r).signed_header;
+    const sig = sh.commit.signatures.find(x => String(x.validator_address || '').toUpperCase() === c.hexAddress);
+    const flag = sig?.block_id_flag;
+    return { height: Number(sh.header.height), signed: !!sig && (Number(flag) === 2 || flag === 'BLOCK_ID_FLAG_COMMIT') };
+  }
+  // Official uptime: missed blocks within the chain's slashing window.
+  async function signingStats(c) {
+    await signer(c);
+    const [info, params] = await Promise.all([
+      get(`${API.rest}${c.registry}/cosmos/slashing/v1beta1/signing_infos/${c.valcons}`),
+      get(`${API.rest}${c.registry}/cosmos/slashing/v1beta1/params`)
+    ]);
+    const window = Number(params.params.signed_blocks_window), missed = Number(info.val_signing_info.missed_blocks_counter);
+    return { window, missed, uptime: window ? 1 - missed / window : null };
   }
 
-  window.CyberneticsData = { load, recent, height, FLOW_TYPES };
+  window.CyberneticsData = { load, recent, commit, signingStats, FLOW_TYPES };
 })();

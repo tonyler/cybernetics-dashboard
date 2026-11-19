@@ -81,7 +81,8 @@
     return m.length > 160 ? m.slice(0, 160) + '…' : m;
   }
 
-  const isMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  // Phones in "desktop site" mode report a desktop user agent, so also trust a touch-only pointer.
+  const isMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.userAgentData?.mobile || matchMedia('(pointer: coarse) and (hover: none)').matches;
   // Keplr mobile opens the URL in its built-in browser, where window.keplr is available.
   const openInApp = () => { location.href = 'keplrwallet://web-browser?url=' + encodeURIComponent(location.href); };
 

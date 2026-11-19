@@ -14,7 +14,7 @@
   ─ wallet.js  in-page delegation via Keplr / Leap
   ─ this file  UI. state { view, chain, metric, days, type, day } is mirrored in the URL hash.
                set(k, v) is the only way state changes; any [data-key][data-value] button calls it.
-               window.cybernetics = { state, set, data, push(event), block(height) }
+               window.cybernetics = { state, set, data, push(event) }
 -->
 <style>
   :root {
@@ -76,10 +76,6 @@
   .id h1 { margin: 0; line-height: 0; }
   .word { width: min(300px, 100%); height: auto; animation: type 1s .5s steps(15, end) both; }
   @keyframes type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
-  .block { margin-top: 12px; font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 10px; }
-  .led { position: relative; width: 6px; height: 6px; transform: rotate(45deg); background: var(--text); }
-  .led.beat::after { content: ""; position: absolute; inset: 0; border: 1px solid var(--text); animation: ripple 1.2s ease-out both; }
-  @keyframes ripple { to { transform: scale(3.2); opacity: 0; } }
   .switch { position: relative; }
   .switch-btn { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 4px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--raise); transition: border-color .2s; }
   .switch-btn:hover, .switch-btn[aria-expanded="true"] { border-color: var(--text); }
@@ -170,6 +166,20 @@
   .more { width: 100%; padding: 16px; border-top: 1px solid var(--line); color: var(--dim); }
   .more:hover { color: var(--text); }
 
+  /* Uptime: one row per network, a square per block */
+  .uptime { display: grid; gap: 34px; margin-top: 8px; }
+  .up-head { display: flex; align-items: center; gap: 10px; }
+  .up-head b { font-weight: 500; }
+  .up-pct { margin-left: auto; font: 500 20px var(--mono); letter-spacing: -.02em; }
+  .up-grid { display: grid; grid-template-columns: repeat(50, 1fr); gap: 3px; margin-top: 14px; }
+  .up-grid i { aspect-ratio: 1; border-radius: 2px; background: var(--line); transition: background .3s; }
+  .up-grid i.ok { background: #2f9e5b; }
+  .up-grid i.miss { background: #d9483b; }
+  .up-grid i.new { animation: pop .5s var(--ease) both; }
+  @keyframes pop { from { transform: scale(0); } }
+  .up-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; font-size: 11px; color: var(--faint); }
+  .up-tag { font-size: 11px; padding: 2px 7px; border-radius: 99px; border: 1px solid var(--line-2); color: var(--dim); }
+
   .stake-view { max-width: 460px; margin: 8px auto 0; }
   .icon { width: 30px; height: 30px; flex: none; border-radius: 50%; display: block; }
 
@@ -215,10 +225,13 @@
     .id { gap: 16px; padding: 24px 0; flex-wrap: wrap; }
     .mark { width: 84px; }
     .id > div { flex: 1; min-width: 0; }
-    .block { margin-top: 12px; }
     .bar .wrap { gap: 8px; }
     .tabs { height: 52px; }
     .head { flex-wrap: wrap; align-items: flex-end; }
+    .up-grid { grid-template-columns: repeat(25, 1fr); gap: 3px; }
+    .tabs { gap: 14px; }
+    .tabs button { font-size: 13px; }
+    .stake { padding: 0 12px; }
     .plot { height: 220px; margin-top: 24px; }
     .row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
     .row .where, .row time { display: none; }
@@ -239,6 +252,7 @@
         <button data-key="view" data-value="charts">Charts</button>
         <button data-key="view" data-value="explorer">Explorer</button>
         <button data-key="view" data-value="inflows">Inflows</button>
+        <button data-key="view" data-value="uptime">Uptime</button>
         <span class="ink" aria-hidden="true"></span>
       </div>
       <div class="switch">
@@ -255,7 +269,6 @@
     </a>
     <div>
       <h1><img class="word" src="assets/word.png" width="416" height="40" alt="The Cybernetics"></h1>
-      <div class="block num"><span class="led"></span><span id="height">—</span></div>
     </div>
   </section>
 
@@ -311,6 +324,10 @@
         <div class="rows" id="flowRows" aria-live="polite"></div>
         <button class="more" data-more>Show more</button>
       </div>
+    </section>
+
+    <section class="view" data-view="uptime">
+      <div class="uptime" id="uptime"></div>
     </section>
 
     <section class="view" data-view="stake">
@@ -740,8 +757,78 @@
     e.currentTarget.style.setProperty('--y', e.clientY - b.top + 'px');
   });
 
+  /* ── Uptime ──────────────────────────────────────────────── */
+  const BLOCKS = 50;
+  const up = {};      // chainId → { blocks: Map(height → signed), latest, stats, busy }
+  function upRow(c) {
+    let row = $('uptime').querySelector(`[data-chain="${c.id}"]`);
+    if (!row) {
+      row = document.createElement('div'); row.className = 'up-row'; row.dataset.chain = c.id;
+      row.innerHTML = `<div class="up-head"><img class="logo" src="${c.icon}" alt=""><b></b><span class="up-tag" hidden></span><span class="up-pct num">—</span></div>
+        <div class="up-grid" role="img"></div><div class="up-foot num"><span>Last ${BLOCKS} blocks</span><span class="up-window"></span></div>`;
+      row.querySelector('b').textContent = c.name;
+      row.querySelector('.up-grid').innerHTML = '<i></i>'.repeat(BLOCKS);
+    }
+    return row;
+  }
+  function drawUptime(c, fresh = []) {
+    const u = up[c.id], row = upRow(c);
+    const tag = row.querySelector('.up-tag');
+    tag.hidden = c.active && !c.jailed; tag.textContent = c.jailed ? 'Jailed' : 'Inactive';
+    if (u.stats?.uptime != null) {
+      row.querySelector('.up-pct').textContent = (u.stats.uptime * 100).toFixed(2) + '%';
+      row.querySelector('.up-window').textContent = `${u.stats.missed.toLocaleString('en-US')} missed in ${u.stats.window.toLocaleString('en-US')}`;
+    }
+    if (!u.latest) return;
+    const cells = row.querySelectorAll('.up-grid i'); let missed = 0, seen = 0;
+    cells.forEach((cell, i) => {
+      const h = u.latest - (BLOCKS - 1 - i), s = u.blocks.get(h);
+      cell.className = s === undefined ? '' : s ? 'ok' : 'miss';
+      if (fresh.includes(h)) cell.classList.add('new');
+      cell.title = `Block ${h.toLocaleString('en-US')}` + (s === undefined ? '' : s ? ' · signed' : ' · missed');
+      if (s !== undefined) { seen++; if (!s) missed++; }
+    });
+    row.querySelector('.up-grid').setAttribute('aria-label', `${c.name}: ${missed} missed of the last ${seen} blocks`);
+  }
+  async function fillBlocks(c, heights) {
+    const u = up[c.id], queue = [...heights];
+    await Promise.all(Array.from({ length: 6 }, async () => {
+      while (queue.length) {
+        const h = queue.pop();
+        try { u.blocks.set(h, (await window.CyberneticsData.commit(c, h)).signed); } catch {}
+        if (state.view === 'uptime') drawUptime(c);
+      }
+    }));
+  }
+  async function syncUptime(c) {
+    const u = up[c.id] ??= { blocks: new Map(), latest: 0, stats: null, busy: false };
+    if (u.busy) return; u.busy = true;
+    try {
+      if (!u.stats) window.CyberneticsData.signingStats(c).then(st => { u.stats = st; drawUptime(c); }).catch(() => {});
+      const top = await window.CyberneticsData.commit(c);
+      const prev = u.latest, fresh = [];
+      u.blocks.set(top.height, top.signed); u.latest = Math.max(u.latest, top.height);
+      for (const h of u.blocks.keys()) if (h <= u.latest - BLOCKS) u.blocks.delete(h);
+      if (prev) for (let h = prev + 1; h <= u.latest; h++) fresh.push(h);
+      drawUptime(c, fresh);
+      const missing = [];
+      for (let h = u.latest - BLOCKS + 1; h < u.latest; h++) if (!u.blocks.has(h)) missing.push(h);
+      await fillBlocks(c, missing);
+    } catch {} finally { u.busy = false; }
+  }
+  const upChains = () => state.chain === 'all' ? Object.values(DATA.chains) : [DATA.chains[state.chain]].filter(Boolean);
+  function tickUptime() { upChains().forEach(syncUptime); }
+  function renderUptime() {
+    const box = $('uptime'), list = upChains();
+    if (!list.length) { box.innerHTML = `<p class="empty">${DATA.loading ? 'Loading…' : 'Couldn’t reach the networks. Retrying…'}</p>`; return; }
+    box.querySelector('.empty')?.remove();
+    box.querySelectorAll('.up-row').forEach(r => { if (!list.some(c => c.id === r.dataset.chain)) r.remove(); });
+    list.forEach(c => { box.appendChild(upRow(c)); if (up[c.id]) drawUptime(c); });
+    tickUptime();
+  }
+
   /* ── Render ────────────────────────────────────────────── */
-  const VIEWS = { charts: renderCharts, explorer: renderExplorer, inflows: renderInflows, stake: renderStake };
+  const VIEWS = { charts: renderCharts, explorer: renderExplorer, inflows: renderInflows, uptime: renderUptime, stake: renderStake };
   document.querySelectorAll('[data-periods]').forEach(g => g.innerHTML = [7, 30, 90].map(d => `<button data-key="days" data-value="${d}">${d}D</button>`).join(''));
 
   function render() {
@@ -757,7 +844,6 @@
     });
     document.body.dataset.view = state.view;
     renderSwitch();
-    if (heightOf && heightChain() && heightOf !== heightChain().id) tickHeight();
     const entering = shownView !== state.view;
     shownView = state.view;
     placeInk();
@@ -789,31 +875,17 @@
   addEventListener('resize', () => { placeInk(); placeThumbs(); }, { passive: true });
 
   /* ── Live API ──────────────────────────────────────────── */
-  let height = 0;
   window.cybernetics = {
     state, set, data: DATA,
     push(event) {
       DATA.events.unshift(event);
       if (state.view === 'explorer') renderExplorer(event);
       if (state.view === 'inflows' && FLOWS.includes(event.type)) renderFlowList(event);
-    },
-    block(h) {
-      if (h === height) return;
-      height = h; roll($('height'), h.toLocaleString('en-US'));
-      const led = document.querySelector('.led'); led.classList.remove('beat'); void led.offsetWidth; led.classList.add('beat');
     }
   };
 
   /* ── Live data ───────────────────────────────────────────── */
   const known = new Set();
-  const heightChain = () => DATA.chains[state.chain] || Object.values(DATA.chains)[0];
-  let heightOf = null;
-  async function tickHeight() {
-    const c = heightChain();
-    if (!c || document.hidden) return;
-    if (heightOf !== c.id) { heightOf = c.id; height = 0; }
-    try { cybernetics.block(await window.CyberneticsData.height(c)); } catch {}
-  }
   async function refreshChain(c) {
     try {
       const fresh = (await window.CyberneticsData.recent(c)).filter(e => !known.has(e.key)).sort((a, b) => a.date.localeCompare(b.date));
@@ -832,7 +904,7 @@
     buildMenu();
     flowKey = ''; shownView = null;
     render();
-    tickHeight(); setInterval(tickHeight, 6000);
+    setInterval(() => { if (state.view === 'uptime' && !document.hidden) tickUptime(); }, 6000);
     setInterval(() => { if (!document.hidden) Object.values(DATA.chains).forEach(refreshChain); }, 60000);
   }
   /* ───────────────────────────────────────────────────────── */

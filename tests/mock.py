@@ -1,5 +1,5 @@
 # Mock cosmos.directory + chain REST so the real page code runs end-to-end offline.
-import json, base64, time, datetime, re
+import json, base64, time, datetime, re, hashlib
 from urllib.parse import urlparse, parse_qs, unquote
 
 CH = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
@@ -83,6 +83,9 @@ JUNO_TX={
 TXS={'cosmoshub':COSMOS_TX,'osmosis':OSMO_TX,'juno':JUNO_TX,'dymension':{}}
 LEGACY={'osmosis'}
 calls=[]
+HEIGHT0=33947379
+def consensus_key(valoper): return base64.b64encode(hashlib.sha256(valoper.encode()).digest()).decode()   # stable fake ed25519 key
+def hex_addr(valoper): return hashlib.sha256(base64.b64decode(consensus_key(valoper))).hexdigest()[:40].upper()
 
 def handle(route):
     u=route.request.url; p=urlparse(u); qs=parse_qs(p.query); path=p.path
@@ -95,13 +98,31 @@ def handle(route):
         if n=='juno': return ok({'name':'juno','validators':[{'moniker':'Other','identity':'X','operator_address':bech('junovaloper',[1]*32)},{'moniker':'The_Cybernetics','identity':'AB3DA9B8891D4F85','operator_address':JUNO_VAL}]})
         if n=='nolus': return ok({'name':'nolus','validators':[{'moniker':'Someone','identity':'Y','operator_address':'nolusvaloper1zz'}]})
         return ok({'validators':[]})
+    if p.hostname=='rpc.cosmos.directory':
+        n=path.split('/')[1]
+        if path.endswith('/commit'):
+            top=HEIGHT0+int(time.time()-now)//6
+            h=int(qs['height'][0]) if 'height' in qs else top
+            ours=[a for a in VALS.get(n,{}) if a.startswith(('cosmosvaloper','osmovaloper','junovaloper','dymvaloper','nolus','chihuahua'))][0]
+            me=hex_addr(ours)
+            sigs=[{'block_id_flag':2,'validator_address':'AB'*20,'signature':'x'}]
+            if h % 17 != 0: sigs.append({'block_id_flag':2,'validator_address':me,'signature':'x'})
+            else: sigs.append({'block_id_flag':1,'validator_address':'','signature':None})
+            return ok({'jsonrpc':'2.0','id':-1,'result':{'signed_header':{'header':{'height':str(h),'time':iso(0)},'commit':{'height':str(h),'signatures':sigs}},'canonical':True}})
     if p.hostname=='rest.cosmos.directory':
         n=path.split('/')[1]; rest='/'+'/'.join(path.split('/')[2:])
         m=re.match(r'/cosmos/staking/v1beta1/validators/(.+)', rest)
         if m:
             v=VALS.get(n,{}).get(m.group(1))
             if not v: return ok({'code':5,'message':'not found'},404)
-            return ok({'validator':{'operator_address':m.group(1),'jailed':False,'tokens':v[1],'description':{'moniker':v[0]},'commission':{'commission_rates':{'rate':v[2]}}}})
+            return ok({'validator':{'operator_address':m.group(1),'jailed':False,'status':'BOND_STATUS_BONDED','tokens':v[1],'description':{'moniker':v[0]},
+                'consensus_pubkey':{'@type':'/cosmos.crypto.ed25519.PubKey','key':consensus_key(m.group(1))},'commission':{'commission_rates':{'rate':v[2]}}}})
+        if rest=='/cosmos/staking/v1beta1/validators':
+            return ok({'validators':[{'operator_address':a,'description':{'moniker':v[0]}} for a,v in VALS.get(n,{}).items()],'pagination':{'next_key':None}})
+        if rest.startswith('/cosmos/slashing/v1beta1/signing_infos/'):
+            return ok({'val_signing_info':{'address':rest.split('/')[-1],'missed_blocks_counter':'7'}})
+        if rest=='/cosmos/slashing/v1beta1/params':
+            return ok({'params':{'signed_blocks_window':'10000'}})
         if rest=='/cosmos/tx/v1beta1/txs' and route.request.method=='GET':
             if 'query' in qs:
                 if n in LEGACY: return ok({'code':3,'message':'must declare at least one event'},400)

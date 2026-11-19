@@ -314,6 +314,7 @@
         <button data-key="type" data-value="redelegation">Redelegations</button>
         <button data-key="type" data-value="undelegation">Undelegations</button>
         <button data-key="type" data-value="vote">Votes</button>
+        <button data-key="type" data-value="unbonded">Completed</button>
       </div>
       <div class="rows" id="rows" aria-live="polite"></div>
       <button class="more" data-more>Show more</button>
@@ -330,6 +331,13 @@
       </div>
       <div class="axis num"><span id="flowFrom"></span><span id="flowTo"></span></div>
       <div class="list">
+        <div class="seg lead" role="group" aria-label="Inflow transaction type">
+          <button data-key="flowType" data-value="all">All</button>
+          <button data-key="flowType" data-value="delegation">Delegations</button>
+          <button data-key="flowType" data-value="redelegation">Redelegations</button>
+          <button data-key="flowType" data-value="undelegation">Undelegations</button>
+          <button data-key="flowType" data-value="unbonded">Completed</button>
+        </div>
         <button class="chip" id="dayChip" data-key="day" data-value="" hidden></button>
         <div class="rows" id="flowRows" aria-live="polite"></div>
         <button class="more" data-more>Show more</button>
@@ -370,7 +378,7 @@
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   /* ── State ─────────────────────────────────────────────── */
-  const DEFAULTS = { view: 'charts', chain: 'all', metric: 'staked', days: 30, type: 'all', day: '' };
+  const DEFAULTS = { view: 'charts', chain: 'all', metric: 'staked', days: 30, type: 'all', flowType: 'all', day: '' };
   const PAGE = 8, MORE = 20;
   const state = { ...DEFAULTS, limit: PAGE };
   let shownView = null;
@@ -537,7 +545,8 @@
   function renderFlowList(fresh) {
     const from = flows[0].date;
     const list = DATA.events.filter(e => FLOWS.includes(e.type) && (state.chain === 'all' || e.chain === state.chain) &&
-      new Date(e.date) >= from && (!state.day || e.date.slice(0, 10) === state.day));
+      new Date(e.date) >= from && (!state.day || e.date.slice(0, 10) === state.day) &&
+      (state.flowType === 'all' || FLOW_FAMILY[state.flowType]?.includes(e.type)));
     const chip = $('dayChip');
     chip.hidden = !state.day;
     if (state.day) chip.textContent = day(new Date(state.day)) + '  ✕';
@@ -577,6 +586,8 @@
   const isOut = e => e.type === 'undelegation' || e.type === 'unbonded' || (e.type === 'redelegation' && e.dir === 'out');
   const FAMILY = { delegation: ['delegation'], redelegation: ['redelegation'], undelegation: ['undelegation', 'unbonded'], vote: ['vote'] };
   const FLOWS = ['delegation', 'undelegation', 'redelegation', 'unbonded'];
+  const FLOW_FAMILY = { delegation: ['delegation'], redelegation: ['redelegation'], undelegation: ['undelegation'], unbonded: ['unbonded'] };
+  FAMILY.unbonded = ['unbonded'];
   function rows(box, list, fresh) {
     const shown = list.slice(0, state.limit);
     if (!list.length) {

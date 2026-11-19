@@ -43,7 +43,11 @@ async def main():
     snap = json.loads((ROOT / 'data' / 'snapshot.json').read_text())
     aprs = {k: round(c['apr'], 2) for k, c in snap['chains'].items()}
     priced = sorted(d for d, v in snap['history'].items() if all('price' in x for x in v.values()))
-    print(f"measured APR {aprs} (mock pays 15%)", 'OK' if all(abs(a - 15) < 0.3 for a in aprs.values()) and all(c.get('aprMeasured') for c in snap['chains'].values()) else 'FAIL')
+    expected = {'cosmos': 0.1973, 'osmosis': 0.06, 'juno': 0.12, 'dymension': 0.05}
+    assert all(abs(snap['chains'][id]['apr'] - value * (1 - snap['chains'][id]['commission']) * 100) < 1e-8 for id, value in expected.items())
+    assert all('aprMeasured' not in c and 'aprEstimated' not in c for c in snap['chains'].values())
+    assert 'aprState' not in snap
+    print(f"provider APRs {aprs}: OK (cosmos.directory only, net of validator commission)")
     priced = sorted(d for d, v in snap['history'].items() if sum('price' in x for x in v.values()) >= 4)
     print(f"CoinGecko: price now cosmos ${snap['chains']['cosmos']['price']}, 2 tokens per run → all 4 after run 2: {len(priced)} days", 'OK' if snap['chains']['cosmos']['price'] == 4.4 and len(priced) >= 90 else 'FAIL')
     print(f'deepest page fetched: run 1 = {first}, run 2 = {second} (only what is new)', 'OK' if first > 5 and second == 1 else 'FAIL')

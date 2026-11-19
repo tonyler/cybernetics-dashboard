@@ -141,3 +141,20 @@ python3 tests/e2e.py             # fallback mode against mocked chain APIs (3 SD
 
 State lives in the URL hash (`#view=inflows&chain=osmosis&day=2026-11-02`). In the console,
 `cybernetics.state`, `cybernetics.set(key, value)` and `cybernetics.data` expose everything rendered.
+
+## Cybernetics 5% net APR contract (collector integration)
+
+The collector at `/scraper/api` returns `networks.<chain>.apr` **already net of Cybernetics' 5% validator commission** for all six chains. Do not multiply it by `(1 - commission)` again in the snapshot generator. `grossStakerApr` is the *pre*-validator-commission APR; use `grossStakerApr / 100` for `chainApr` and historical gross staker/operator reward estimates. The dashboard's display `chains[id].apr` receives the collector's net `apr` unchanged.
+
+To prevent double deductions and mixing unrelated providers with these figures, `scripts/remote-apr.mjs` only accepts fresh `ok` readings carrying the explicit `aprType: "estimated-cybernetics-5-percent-net-staking-apr"`, matching Cybernetics commission metadata, and a consistent gross/net relationship. When those checks fail the existing provider fallback may be used; it is not silently treated as a Cybernetics-specific collector result.
+
+**Deployment requires updating the server's checked-out dashboard source**, not just the `Apr-scraper` repository:
+
+```sh
+cd ~/apps/Apr-scraper
+sudo bash deploy/install-dashboard.sh
+sudo systemctl restart keplr-apr-scraper
+curl -fsSL https://tonyler.is-not-a.dev/scraper/snapshot | jq '.chains.cosmos | {apr,chainApr,aprSource}'
+```
+
+After the VPS generates a fresh snapshot, the `Snapshot and deploy` GitHub Action downloads `/scraper/snapshot` on its 15-minute schedule and deploys GitHub Pages. The dashboard's APR and reward estimates should then reflect the corrected gross/net semantics.

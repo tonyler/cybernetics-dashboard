@@ -1,0 +1,260 @@
+/*
+  Data layer: live validator data from public Cosmos APIs. No backend, no API keys.
+
+    chains.cosmos.directory/<chain>              chain id, token, decimals, APR, unbonding time, USD price, fees
+    validators.cosmos.directory/chains/<chain>   finds the validator by Keybase identity / moniker (only if not pinned)
+    rest.cosmos.directory/<chain>                validator stake + commission, transaction search, latest block
+    rpc.cosmos.directory/<chain>                 used by wallet.js to broadcast delegations
+
+  Output (what index.html renders):
+    chains  { [id]: { name, token, icon, apr, chainApr, commission, unbonding, tokens, price, decimals, denom,
+                      chainId, registry, valoper, account, rpc, gasPrice, wallet, keplrUrl } }
+    events  [{ key, type, dir?, chain, text, detail, date, hash, amount, unbondsAt? }]   newest first
+            type: delegation | undelegation | redelegation (dir: in|out) | unbonded | vote
+    daily   [{ date, flows, staked, stakerRewards, operatorRewards }]   oldest first; each is { [chainId]: USD }
+
+  Notes
+    - Daily history is rebuilt from current stake minus later net flows, valued at today's price.
+    - Rewards per day = stake × chain APR / 365, split by commission (operator) and the rest (stakers).
+    - History depth is limited by what public nodes keep indexed (config.history.pages × 100 txs per type).
+*/
+(() => {
+  'use strict';
+  const CFG = window.CYBERNETICS;
+  const API = {
+    chains: 'https://chains.cosmos.directory/',
+    validators: 'https://validators.cosmos.directory/chains/',
+    rest: 'https://rest.cosmos.directory/',
+    rpc: 'https://rpc.cosmos.directory/'
+  };
+  const DAY = 864e5, LIMIT = 100;
+  const FLOW_TYPES = ['delegation', 'undelegation', 'redelegation'];
+
+  async function get(url, ms = 20000) {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), ms);
+    try {
+      const res = await fetch(url, { signal: ctl.signal });
+      if (!res.ok) throw new Error(`${res.status} ${url}`);
+      return await res.json();
+    } finally { clearTimeout(timer); }
+  }
+
+  /* ── bech32: same key, different prefix (valoper → account) ── */
+  const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+  function polymod(values) {
+    const G = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+    let chk = 1;
+    for (const v of values) {
+      const top = chk >> 25;
+      chk = ((chk & 0x1ffffff) << 5) ^ v;
+      for (let i = 0; i < 5; i++) if ((top >> i) & 1) chk ^= G[i];
+    }
+    return chk;
+  }
+  function withPrefix(address, hrp) {
+    const data = [...address.slice(address.lastIndexOf('1') + 1, -6)].map(c => CHARSET.indexOf(c));
+    const expanded = [...[...hrp].map(c => c.charCodeAt(0) >> 5), 0, ...[...hrp].map(c => c.charCodeAt(0) & 31)];
+    const mod = polymod([...expanded, ...data, 0, 0, 0, 0, 0, 0]) ^ 1;
+    const checksum = Array.from({ length: 6 }, (_, i) => (mod >> (5 * (5 - i))) & 31);
+    return hrp + '1' + [...data, ...checksum].map(d => CHARSET[d]).join('');
+  }
+
+  /* ── Formatting shared with the UI ── */
+  const fmtAmount = v => {
+    const a = Math.abs(v);
+    return a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a.toLocaleString('en-US', { maximumFractionDigits: a < 10 ? 2 : 0 });
+  };
+  const signed = (v, token) => (v < 0 ? '−' : '+') + fmtAmount(v) + ' ' + token;
+  const gasString = (price, denom) => (+price).toFixed(12).replace(/\.?0+$/, '') + denom;
+
+  /* ── Transaction search (SDK ≥0.50 uses `query`, older nodes `events`) ── */
+  async function search(chain, query, pages) {
+    const base = `${API.rest}${chain.registry}/cosmos/tx/v1beta1/txs?order_by=ORDER_BY_DESC&`;
+    const q = encodeURIComponent(query), out = [];
+    for (let page = 1; page <= pages; page++) {
+      let res;
+      if (chain.legacySearch !== true) {
+        try { res = await get(`${base}query=${q}&page=${page}&limit=${LIMIT}`); chain.legacySearch = false; }
+        catch (err) { if (chain.legacySearch === false) throw err; chain.legacySearch = true; }
+      }
+      if (chain.legacySearch) res = await get(`${base}events=${q}&pagination.offset=${(page - 1) * LIMIT}&pagination.limit=${LIMIT}`);
+      const txs = res.tx_responses || [];
+      out.push(...txs);
+      if (txs.length < LIMIT) break;
+    }
+    return out;
+  }
+
+  // Events of a tx with plain attributes (older nodes base64-encode tx-level events).
+  const unb64 = s => { try { const d = atob(s); return /^[\x20-\x7e]*$/.test(d) ? d : s; } catch { return s; } };
+  function txEvents(tx) {
+    const raw = tx.logs?.some(l => l.events?.length) ? tx.logs.flatMap(l => l.events) : (tx.events || []);
+    return raw.map(e => {
+      const attrs = {};
+      for (const a of e.attributes || []) {
+        let k = a.key || '', v = a.value ?? '';
+        if (!/^[a-z_]+$/.test(k) && /^[a-z_]+$/.test(unb64(k))) { k = unb64(k); v = unb64(v); }
+        attrs[k] = v;
+      }
+      return { type: e.type, attrs };
+    });
+  }
+  const baseUnits = s => { const m = /^(\d+)/.exec(String(s || '').trim()); return m ? Number(m[1]) : 0; };
+  function voteText(option) {
+    const o = String(option || '').toUpperCase();
+    const name = /VETO|"?OPTION"?:\s*4\b|^4$/.test(o) ? 'no with veto' : /ABSTAIN|:\s*2\b|^2$/.test(o) ? 'abstain'
+      : /\bNO\b|_NO\b|:\s*3\b|^3$/.test(o) ? 'no' : 'yes';
+    return 'Voted ' + name;
+  }
+
+  async function chainEvents(c, pages) {
+    const [del, unb, rin, rout, own] = await Promise.all([
+      search(c, `delegate.validator='${c.valoper}'`, pages),
+      search(c, `unbond.validator='${c.valoper}'`, pages),
+      search(c, `redelegate.destination_validator='${c.valoper}'`, Math.max(1, pages - 1)),
+      search(c, `redelegate.source_validator='${c.valoper}'`, Math.max(1, pages - 1)),
+      search(c, `message.sender='${c.account}'`, 1)
+    ].map(p => p.catch(() => [])));
+    const out = new Map();
+    const amountOf = a => baseUnits(a.amount) / 10 ** c.decimals;
+    const add = (tx, i, ev) => {
+      const key = `${c.id}:${tx.txhash}:${i}`;
+      if (!out.has(key)) out.set(key, { key, chain: c.id, hash: tx.txhash, date: new Date(tx.timestamp).toISOString(), ...ev });
+    };
+    const scan = (txs, fromOwnAccount) => txs.forEach(tx => {
+      if (tx.code) return;
+      txEvents(tx).forEach((e, i) => {
+        const a = e.attrs;
+        if (e.type === 'delegate' && a.validator === c.valoper) {
+          const v = amountOf(a);
+          add(tx, i, { type: 'delegation', amount: v, text: 'Delegation', detail: signed(v, c.token) });
+        } else if (e.type === 'unbond' && a.validator === c.valoper) {
+          const v = -amountOf(a);
+          add(tx, i, { type: 'undelegation', amount: v, text: 'Undelegation', detail: signed(v, c.token),
+            unbondsAt: a.completion_time ? new Date(a.completion_time).toISOString() : undefined });
+        } else if (e.type === 'redelegate' && (a.destination_validator === c.valoper || a.source_validator === c.valoper)) {
+          const incoming = a.destination_validator === c.valoper, v = (incoming ? 1 : -1) * amountOf(a);
+          add(tx, i, { type: 'redelegation', dir: incoming ? 'in' : 'out', amount: v, detail: signed(v, c.token),
+            peer: incoming ? a.source_validator : a.destination_validator });
+        } else if (e.type === 'proposal_vote' && fromOwnAccount && (!a.voter || a.voter === c.account)) {
+          add(tx, i, { type: 'vote', amount: 0, text: voteText(a.option), detail: 'Proposal #' + (a.proposal_id || '?') });
+        }
+      });
+    });
+    scan(del); scan(unb); scan(rin); scan(rout); scan(own, true);
+    return [...out.values()];
+  }
+
+  async function nameRedelegationPeers(c, events, monikers) {
+    const peers = [...new Set(events.filter(e => e.type === 'redelegation').map(e => e.peer))];
+    const names = new Map(monikers ? peers.map(p => [p, monikers.get(p)]) : []);
+    await Promise.all(peers.filter(p => !names.get(p)).slice(0, 20).map(p =>
+      get(`${API.rest}${c.registry}/cosmos/staking/v1beta1/validators/${p}`)
+        .then(r => names.set(p, r.validator?.description?.moniker)).catch(() => {})));
+    for (const e of events) if (e.type === 'redelegation') {
+      const name = names.get(e.peer) || (e.peer.slice(0, 12) + '…' + e.peer.slice(-4));
+      e.text = (e.dir === 'in' ? 'Redelegated from ' : 'Redelegated to ') + name;
+    }
+  }
+
+  // An undelegation's tokens are released when its unbonding period ends.
+  function completedUnbondings(c, events) {
+    const now = Date.now();
+    return events.filter(e => e.type === 'undelegation').map(e => {
+      const at = e.unbondsAt ? +new Date(e.unbondsAt) : +new Date(e.date) + c.unbonding * DAY;
+      e.unbondsAt = new Date(at).toISOString();
+      return at <= now && { key: e.key + ':done', type: 'unbonded', chain: c.id, hash: e.hash, amount: e.amount,
+        text: 'Unbonding complete', detail: e.detail, date: new Date(at).toISOString() };
+    }).filter(Boolean);
+  }
+
+  async function loadChain(cfg) {
+    const meta = (await get(API.chains + cfg.registry)).chain;
+    let valoper = cfg.valoper, monikers = null;
+    if (!valoper) {
+      const list = (await get(API.validators + cfg.registry, 40000)).validators || [];
+      const me = list.find(v => (v.identity || v.description?.identity) === CFG.identity)
+        || list.find(v => (v.moniker || v.description?.moniker) === CFG.moniker);
+      if (!me) throw new Error(`${CFG.moniker} not found on ${cfg.registry}`);
+      valoper = me.operator_address || me.address;
+      monikers = new Map(list.map(v => [v.operator_address || v.address, v.moniker || v.description?.moniker]));
+    }
+    const { validator: v } = await get(`${API.rest}${cfg.registry}/cosmos/staking/v1beta1/validators/${valoper}`);
+    const decimals = meta.decimals ?? 6;
+    const commission = Number(v.commission?.commission_rates?.rate ?? 0);
+    const chainApr = meta.params?.calculated_apr ?? meta.params?.estimated_apr ?? null;
+    const prices = meta.prices?.coingecko || {};
+    const fee = (meta.fees?.fee_tokens || []).find(f => f.denom === meta.denom) || {};
+    const c = {
+      id: cfg.id, registry: cfg.registry, name: cfg.name || meta.pretty_name, icon: cfg.icon,
+      token: meta.symbol, denom: meta.denom, decimals, chainId: meta.chain_id, valoper,
+      account: withPrefix(valoper, meta.bech32_prefix),
+      tokens: Number(v.tokens) / 10 ** decimals, commission, chainApr,
+      apr: chainApr == null ? null : chainApr * (1 - commission) * 100,     // what a delegator earns
+      price: prices[meta.display]?.usd ?? prices[String(meta.symbol).toLowerCase()]?.usd ?? 0,
+      unbonding: Math.round((meta.params?.unbonding_time ?? 21 * 86400) / 86400),
+      rpc: API.rpc + cfg.registry,
+      gasPrice: cfg.gasPrice || gasString(fee.average_gas_price ?? fee.low_gas_price ?? fee.fixed_min_gas_price ?? 0.025, meta.denom),
+      wallet: cfg.wallet !== false,
+      jailed: !!v.jailed,
+      keplrUrl: `https://wallet.keplr.app/chains/${cfg.keplr || cfg.registry}?modal=validator&chain=${meta.chain_id}&validator_address=${valoper}`,
+      txUrl: hash => `https://www.mintscan.io/${cfg.mintscan || cfg.registry}/tx/${hash}`
+    };
+    const events = await chainEvents(c, CFG.history?.pages ?? 3);
+    await nameRedelegationPeers(c, events, monikers);
+    return { chain: c, events: [...events, ...completedUnbondings(c, events)] };
+  }
+
+  function buildDaily(chains, events) {
+    const days = CFG.history?.days ?? 90;
+    const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+    const daily = Array.from({ length: days }, (_, i) => ({
+      date: new Date(+today - (days - 1 - i) * DAY).toISOString(),
+      flows: {}, staked: {}, stakerRewards: {}, operatorRewards: {}
+    }));
+    for (const c of Object.values(chains)) {
+      const net = new Array(days).fill(0);            // tokens per day
+      for (const e of events) {
+        if (e.chain !== c.id || !FLOW_TYPES.includes(e.type)) continue;
+        const d = new Date(e.date); d.setUTCHours(0, 0, 0, 0);
+        const i = days - 1 - Math.round((+today - +d) / DAY);
+        if (i >= 0 && i < days) net[i] += e.amount;
+      }
+      let later = 0;                                   // net flow after day i
+      for (let i = days - 1; i >= 0; i--) {
+        const staked = Math.max(0, c.tokens - later), perDay = staked * (c.chainApr || 0) / 365;
+        daily[i].flows[c.id] = net[i] * c.price;
+        daily[i].staked[c.id] = staked * c.price;
+        daily[i].operatorRewards[c.id] = perDay * c.commission * c.price;
+        daily[i].stakerRewards[c.id] = perDay * (1 - c.commission) * c.price;
+        later += net[i];
+      }
+    }
+    return daily;
+  }
+
+  async function load() {
+    const results = await Promise.allSettled(CFG.chains.map(loadChain));
+    const chains = {}, events = [], failed = [];
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') { chains[r.value.chain.id] = r.value.chain; events.push(...r.value.events); }
+      else { failed.push(CFG.chains[i].id); console.warn('[cybernetics]', CFG.chains[i].id, r.reason); }
+    });
+    events.sort((a, b) => b.date.localeCompare(a.date));
+    return { chains, events, daily: buildDaily(chains, events), failed };
+  }
+
+  // Newest events for one chain (first page only), for live updates.
+  async function recent(c) {
+    const events = await chainEvents(c, 1);
+    await nameRedelegationPeers(c, events, null);
+    return events;
+  }
+
+  async function height(c) {
+    const r = await get(`${API.rest}${c.registry}/cosmos/base/tendermint/v1beta1/blocks/latest`, 8000);
+    return Number((r.sdk_block || r.block).header.height);
+  }
+
+  window.CyberneticsData = { load, recent, height, FLOW_TYPES };
+})();

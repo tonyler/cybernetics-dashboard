@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ededeb">
+<title>The Cybernetics · Validator</title>
+<meta name="description" content="Live validator dashboard for The Cybernetics across Cosmos networks: stake, rewards, delegation flows, activity, and in-page staking.">
+<link rel="icon" href="assets/favicon.png">
+<!--
+  The Cybernetics validator dashboard. Static, no build step, no backend.
+  ─ config.js  validator identity + networks (the only file to edit)
+  ─ data.js    live data from public Cosmos APIs → { chains, events, daily }
+  ─ wallet.js  in-page delegation via Keplr / Leap
+  ─ this file  UI. state { view, chain, metric, days, type, day } is mirrored in the URL hash.
+               set(k, v) is the only way state changes; any [data-key][data-value] button calls it.
+               window.cybernetics = { state, set, data, push(event), block(height) }
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ededeb; --raise: #f6f6f4; --line: #dcdcd8; --line-2: #c8c8c3;
+    --text: #111; --dim: #63635f; --faint: #9b9b96;
+    --sig: #111; --neg: #111; --paper: #f6f6f4;
+    --check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --ease: cubic-bezier(.7, 0, .2, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { overflow-x: clip; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 var(--sans); -webkit-font-smoothing: antialiased; }
+  button, input, select { font: inherit; color: inherit; background: none; border: 0; padding: 0; }
+  button { cursor: pointer; }
+  a { color: inherit; text-decoration: none; }
+  [hidden] { display: none !important; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  :focus-visible { outline: 1px solid var(--sig); outline-offset: 3px; }
+  .wrap { width: min(1080px, calc(100% - 40px)); margin-inline: auto; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* Bar */
+  .bar { position: sticky; top: 0; z-index: 10; background: #ededebd9; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
+  .bar .wrap { display: flex; align-items: center; gap: 14px; }
+  .tabs { position: relative; display: flex; gap: 26px; height: 56px; margin-right: auto; }
+  .tabs button { color: var(--dim); font-weight: 500; transition: color .2s; }
+  .tabs button:hover, .tabs [aria-current="page"] { color: var(--text); }
+  .ink { position: absolute; bottom: -1px; height: 1px; background: var(--sig); transition: left .45s var(--ease), width .45s var(--ease), opacity .2s; }
+  .stake { position: relative; overflow: hidden; height: 32px; padding: 0 16px; border-radius: 6px; background: var(--text); color: var(--paper); font-weight: 600; }
+  .stake, .go { transition: transform .12s var(--ease), background .2s; }
+  .stake:active, .go:active { transform: scale(.97); }
+  .stake[aria-current="page"] { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--sig); }
+
+  body.loading .bar::after { content: ""; position: absolute; left: 0; bottom: -1px; height: 1px; width: 30%; background: var(--text); animation: load 1.1s var(--ease) infinite; }
+  @keyframes load { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  a.row { color: inherit; transition: background .15s; }
+  a.row:hover { background: var(--raise); }
+  .stake-status { margin: 14px 0 0; font-size: 13px; color: var(--dim); text-align: center; min-height: 1em; }
+  .stake-status a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+  .stake-status.err { color: #8a2c22; }
+  .go[aria-busy="true"] { opacity: .6; pointer-events: none; }
+
+  /* Identity */
+  .id { display: flex; align-items: center; gap: 28px; padding: 40px 0; border-bottom: 1px solid var(--line); }
+  .mark { position: relative; flex: none; width: 196px; display: block; overflow: hidden; }
+  .mark img { display: block; width: 100%; height: auto; animation: boot 1.1s var(--ease) both; }
+  .mark::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 34%; background: linear-gradient(transparent, #1111110d); border-bottom: 1px solid #11111140; transform: translateY(-110%); animation: scanY 1.6s 1s var(--ease) both; pointer-events: none; }
+  @keyframes boot { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0); } }
+  @keyframes scanY { to { transform: translateY(310%); } }
+  .id h1 { margin: 0; line-height: 0; }
+  .word { width: min(400px, 100%); height: auto; animation: type 1s .5s steps(15, end) both; }
+  @keyframes type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
+  .block { margin-top: 18px; font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 10px; }
+  .led { position: relative; width: 6px; height: 6px; transform: rotate(45deg); background: var(--text); }
+  .led.beat::after { content: ""; position: absolute; inset: 0; border: 1px solid var(--text); animation: ripple 1.2s ease-out both; }
+  @keyframes ripple { to { transform: scale(3.2); opacity: 0; } }
+  .switch { position: relative; }
+  .switch-btn { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 4px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--raise); transition: border-color .2s; }
+  .switch-btn:hover, .switch-btn[aria-expanded="true"] { border-color: var(--text); }
+  .switch-btn svg.chev { width: 10px; height: 10px; color: var(--dim); transition: transform .25s var(--ease); }
+  .switch-btn[aria-expanded="true"] svg.chev { transform: rotate(180deg); }
+  .logo { display: block; width: 24px; height: 24px; border-radius: 50%; flex: none; }
+  .switch-btn.nudge { animation: hop .6s .3s var(--ease) 2; }
+  @keyframes hop { 40% { transform: translateY(-4px); } }
+  .menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; width: 232px; padding: 6px; background: #fff; border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 12px 32px #11111118; animation: drop .22s var(--ease) both; }
+  @keyframes drop { from { clip-path: inset(0 0 100% 0); opacity: .4; } to { clip-path: inset(0 0 0 0); } }
+  .menu button { width: 100%; display: flex; align-items: center; gap: 12px; height: 42px; padding: 0 10px; border-radius: 8px; text-align: left; transition: background .15s; }
+  .menu button:hover, .menu button:focus-visible { background: var(--bg); outline: 0; }
+  .menu button::after { content: ""; margin-left: auto; width: 14px; height: 14px; background: var(--text); -webkit-mask: var(--check) center / contain no-repeat; mask: var(--check) center / contain no-repeat; transform: scale(0); transition: transform .25s var(--ease); }
+  .menu [aria-checked="true"]::after { transform: scale(1); }
+  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+  body[data-view="stake"] .menu .all, body[data-view="stake"] .menu hr { display: none; }
+
+  /* Views */
+  main { padding: 28px 0 96px; }
+  .view { position: relative; }
+  .view.in { animation: wipe .5s var(--ease) both; }
+  .view.in::after { content: ""; position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text); animation: line .5s var(--ease) both; }
+  @keyframes wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
+  @keyframes line { from { left: 0; } 90% { opacity: 1; } to { left: 100%; opacity: 0; } }
+
+  .seg { position: relative; isolation: isolate; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+  .seg .thumb { position: absolute; z-index: -1; top: 3px; bottom: 3px; left: 0; border-radius: 7px; background: var(--raise); box-shadow: 0 0 0 1px var(--line-2), 0 1px 2px #1111110f; transition: transform .4s var(--ease), width .4s var(--ease); pointer-events: none; }
+  .seg button { flex: none; display: inline-flex; align-items: center; padding: 9px 12px; color: var(--dim); white-space: nowrap; transition: color .2s; }
+  .seg button:hover, .seg [aria-pressed="true"] { color: var(--text); }
+  .seg.mono button { font: 12px var(--mono); }
+  .lead { margin-left: -12px; }
+
+  .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-top: 24px; }
+  .roll { display: inline-flex; white-space: pre; user-select: none; }
+  .roll > span { display: inline-block; height: 1em; line-height: 1; overflow: hidden; }
+  .roll .col { display: flex; flex-direction: column; transition: transform .8s var(--ease); }
+  .roll .col > span { height: 1em; }
+  .big { font-size: clamp(44px, 8vw, 88px); font-weight: 500; letter-spacing: -.045em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .value-row { display: flex; align-items: baseline; gap: 12px; }
+  .unit { font-size: 15px; color: var(--dim); white-space: nowrap; }
+  .delta { margin-top: 10px; font-size: 13px; color: var(--sig); }
+  .neg { color: var(--neg) !important; }
+
+  .plot { position: relative; height: 300px; margin-top: 32px; touch-action: pan-y; }
+  .plot svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .line { fill: none; stroke: var(--sig); stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; animation: trace 1.1s var(--ease) both; }
+  @keyframes trace { from { clip-path: inset(-10px 100% -10px 0); } to { clip-path: inset(-10px 0 -10px 0); } }
+  .grid { stroke: var(--line); vector-effect: non-scaling-stroke; }
+  .scan { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+  .scan::before { content: ""; position: absolute; top: 0; bottom: 0; width: 16%; background: linear-gradient(90deg, transparent, #11111126); border-right: 1px solid #1111114d; transform: translateX(-110%); }
+  .scan.play::before { animation: sweep 1.5s .3s var(--ease) both; }
+  @keyframes sweep { to { transform: translateX(640%); } }
+  .dot { position: absolute; width: 7px; height: 7px; margin: -3.5px; border-radius: 50%; background: var(--sig); box-shadow: 0 0 0 4px #11111114; pointer-events: none; }
+  .dot.cursor { background: #fff; border: 1.5px solid var(--sig); box-shadow: none; }
+  .rule { position: absolute; top: 0; bottom: 0; width: 1px; background: repeating-linear-gradient(var(--dim) 0 3px, transparent 3px 7px); pointer-events: none; }
+  .tip { position: absolute; transform: translate(-50%, calc(-100% - 14px)); padding: 7px 10px; background: #fff; border: 1px solid var(--line-2); border-radius: 6px; font: 12px var(--mono); white-space: nowrap; pointer-events: none; }
+  .tip small { display: block; color: var(--faint); font-size: 11px; margin-bottom: 2px; }
+  .axis { display: flex; justify-content: space-between; margin-top: 12px; font-size: 11px; color: var(--faint); }
+  .bars rect { transform-box: fill-box; animation: grow .6s var(--ease) both; transition: opacity .15s; }
+  @keyframes grow { from { transform: scaleY(0); } }
+  .bars.hover rect:not(.on) { opacity: .3; }
+
+  .rows { margin-top: 20px; }
+  .row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) 56px; gap: 20px; align-items: center; min-height: 58px; border-top: 1px solid var(--line); position: relative; }
+  .row > :nth-child(3), .row > :last-child { text-align: right; }
+  .row .what { display: flex; align-items: center; gap: 12px; font-weight: 500; }
+  .row .where, .row time { color: var(--dim); }
+  .row time { font-size: 12px; }
+  .ev-icon { width: 16px; height: 16px; flex: none; color: var(--text); fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  .ev-icon.out { color: var(--faint); }
+  .due { display: block; margin-top: 3px; font-size: 11px; color: var(--faint); }
+  .row.new { animation: flash 1.8s ease-out; }
+  .row.new::before { content: ""; position: absolute; top: -1px; left: 0; height: 1px; background: var(--sig); animation: draw 1.2s var(--ease) both; }
+  @keyframes flash { from { background: #1111111c; } }
+  @keyframes draw { from { width: 0; } 70% { opacity: 1; } to { width: 100%; opacity: 0; } }
+  #flowPlot { cursor: pointer; }
+  .list { margin-top: 28px; }
+  .list .rows { margin-top: 0; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 6px; font: 12px var(--mono); }
+  .chip:hover { border-color: var(--text); }
+  .empty { margin: 0; padding: 20px 0; border-top: 1px solid var(--line); color: var(--faint); }
+  .more { width: 100%; padding: 16px; border-top: 1px solid var(--line); color: var(--dim); }
+  .more:hover { color: var(--text); }
+
+  .stake-view { max-width: 460px; margin: 8px auto 0; }
+  .icon { width: 30px; height: 30px; flex: none; border-radius: 50%; display: block; }
+
+  /* Panel: hairline frame with corner brackets; the border lights up around the cursor */
+  .panel { position: relative; padding: 28px; border: 1px solid var(--line-2); border-radius: 3px; background: var(--raise); --x: 50%; --y: 0%; }
+  .panel::before { content: ""; position: absolute; inset: -7px; pointer-events: none; --c: var(--text);
+    background:
+      linear-gradient(var(--c),var(--c)) top left/14px 1px no-repeat, linear-gradient(var(--c),var(--c)) top left/1px 14px no-repeat,
+      linear-gradient(var(--c),var(--c)) top right/14px 1px no-repeat, linear-gradient(var(--c),var(--c)) top right/1px 14px no-repeat,
+      linear-gradient(var(--c),var(--c)) bottom left/14px 1px no-repeat, linear-gradient(var(--c),var(--c)) bottom left/1px 14px no-repeat,
+      linear-gradient(var(--c),var(--c)) bottom right/14px 1px no-repeat, linear-gradient(var(--c),var(--c)) bottom right/1px 14px no-repeat; }
+  .panel::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; pointer-events: none; opacity: 0; transition: opacity .3s;
+    background: radial-gradient(220px circle at var(--x) var(--y), #111, transparent 70%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude; }
+  .panel:hover::after { opacity: 1; }
+  .p-head { display: flex; align-items: center; gap: 12px; }
+  .p-head .icon { width: 34px; height: 34px; }
+  .p-head b { font-weight: 500; font-size: 15px; }
+  .p-apr { margin-left: auto; text-align: right; font: 500 26px var(--mono); letter-spacing: -.02em; }
+  .p-apr small { display: block; font-size: 10px; letter-spacing: .14em; color: var(--faint); }
+  .amount { display: flex; align-items: baseline; gap: 10px; margin-top: 28px; padding-bottom: 12px; border-bottom: 1px solid var(--line-2); transition: border-color .2s; }
+  .amount:focus-within { border-color: var(--text); }
+  .amount input { flex: 1; min-width: 0; width: 100%; outline: 0; font: 40px var(--mono); letter-spacing: -.03em; }
+  .amount span { font: 13px var(--mono); color: var(--dim); }
+  .earn { margin-top: 30px; display: flex; justify-content: space-between; align-items: baseline; }
+  .earn b { font: 500 22px var(--mono); letter-spacing: -.02em; }
+  .earn > span { color: var(--dim); font-size: 13px; }
+  .proj { position: relative; height: 84px; margin-top: 14px; }
+  .proj svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .proj .line.still { animation: none; }
+  .proj .dot { animation: none; }
+  .proj-axis { display: flex; justify-content: space-between; margin-top: 8px; font: 10px var(--mono); color: var(--faint); }
+  .go { position: relative; overflow: hidden; margin-top: 24px; height: 48px; display: flex; align-items: center; justify-content: center; gap: 10px; border-radius: 8px; background: var(--text); color: var(--paper); font-weight: 600; }
+  .go[aria-disabled="true"] { background: var(--line); color: var(--faint); pointer-events: none; }
+  .panel.idle .filled { opacity: .35; pointer-events: none; }
+  .panel.idle .p-head .icon { visibility: hidden; }
+  .panel.in { animation: rise .6s var(--ease) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+  @media (max-width: 720px) {
+    .tabs { gap: 18px; }
+    .id { gap: 16px; padding: 24px 0; flex-wrap: wrap; }
+    .mark { width: 112px; }
+    .id > div { flex: 1; min-width: 0; }
+    .block { margin-top: 12px; }
+    .bar .wrap { gap: 8px; }
+    .tabs { height: 52px; }
+    .head { flex-wrap: wrap; align-items: flex-end; }
+    .plot { height: 220px; margin-top: 24px; }
+    .row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+    .row .where, .row time { display: none; }
+    .row .what .sub { display: block; }
+    .panel { padding: 22px; }
+  }
+  .row .sub { display: none; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--faint); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+  <header class="bar">
+    <nav class="wrap" aria-label="Sections">
+      <div class="tabs">
+        <button data-key="view" data-value="charts">Charts</button>
+        <button data-key="view" data-value="explorer">Explorer</button>
+        <button data-key="view" data-value="inflows">Inflows</button>
+        <span class="ink" aria-hidden="true"></span>
+      </div>
+      <div class="switch">
+        <button class="switch-btn" id="switchBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="menu"><span id="switchLogo"></span><svg class="chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="m2 3.5 3 3 3-3" stroke="currentColor" stroke-width="1.4"/></svg></button>
+        <div class="menu" id="menu" role="menu" aria-label="Network" hidden></div>
+      </div>
+      <button class="stake" data-key="view" data-value="stake">Stake</button>
+    </nav>
+  </header>
+
+  <section class="wrap id">
+    <a class="mark" href="https://thecybernetics.org/" target="_blank" rel="noopener">
+            <img src="assets/mark.webp" width="520" height="457" alt="The Cybernetics">
+    </a>
+    <div>
+      <h1><img class="word" src="assets/word.png" width="416" height="40" alt="The Cybernetics"></h1>
+      <div class="block num"><span class="led"></span><span id="height">—</span></div>
+    </div>
+  </section>
+
+  <main class="wrap">
+    <section class="view" data-view="charts">
+      <div class="seg lead" role="group" aria-label="Metric">
+        <button data-key="metric" data-value="staked">Total staked</button>
+        <button data-key="metric" data-value="stakerRewards">Staker rewards</button>
+        <button data-key="metric" data-value="operatorRewards">Operator rewards</button>
+      </div>
+      <div class="head">
+        <div>
+          <div class="value-row"><div class="big" id="perfValue" aria-live="polite">—</div><span class="unit" id="perfUnit" hidden>per day</span></div>
+          <div class="delta num" id="perfDelta"></div>
+        </div>
+        <div class="seg mono" role="group" aria-label="Period" data-periods></div>
+      </div>
+      <div class="plot" id="perfPlot" tabindex="0" role="img">
+        <svg id="perfSvg" viewBox="0 0 900 300" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div class="scan"></div>
+        <div class="dot end" id="perfEnd"></div>
+        <div class="rule" id="perfRule" hidden></div>
+        <div class="dot cursor" id="perfCursor" hidden></div>
+        <div class="tip" id="perfTip" hidden></div>
+      </div>
+      <div class="axis num"><span id="perfFrom"></span><span id="perfTo"></span></div>
+    </section>
+
+    <section class="view" data-view="explorer">
+      <div class="seg lead" role="group" aria-label="Event type">
+        <button data-key="type" data-value="all">All</button>
+        <button data-key="type" data-value="delegation">Delegations</button>
+        <button data-key="type" data-value="redelegation">Redelegations</button>
+        <button data-key="type" data-value="undelegation">Undelegations</button>
+        <button data-key="type" data-value="vote">Votes</button>
+      </div>
+      <div class="rows" id="rows" aria-live="polite"></div>
+      <button class="more" data-more>Show more</button>
+    </section>
+
+    <section class="view" data-view="inflows">
+      <div class="head" style="margin-top:8px">
+        <div class="big" id="netValue" aria-live="polite">—</div>
+        <div class="seg mono" role="group" aria-label="Period" data-periods></div>
+      </div>
+      <div class="plot" id="flowPlot" tabindex="0" role="img">
+        <svg id="flowSvg" viewBox="0 0 900 300" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div class="tip" id="flowTip" hidden></div>
+      </div>
+      <div class="axis num"><span id="flowFrom"></span><span id="flowTo"></span></div>
+      <div class="list">
+        <button class="chip" id="dayChip" data-key="day" data-value="" hidden></button>
+        <div class="rows" id="flowRows" aria-live="polite"></div>
+        <button class="more" data-more>Show more</button>
+      </div>
+    </section>
+
+    <section class="view" data-view="stake">
+      <div class="stake-view">
+        <div class="panel" id="panel">
+            <div class="filled">
+              <div class="p-head"><img class="icon" id="pIcon" alt=""><b id="pName"></b><div class="p-apr"><span id="pApr"></span><small>APR</small></div></div>
+              <label class="amount"><input id="amount" inputmode="decimal" value="100" aria-label="Amount"><span id="token"></span></label>
+              <div class="earn"><b id="pYear"></b><span>per year</span></div>
+              <div class="proj"><svg id="projSvg" viewBox="0 0 300 84" preserveAspectRatio="none" aria-hidden="true"></svg><div class="dot" id="projEnd"></div></div>
+              <div class="proj-axis"><span>Today</span><span>1 year</span></div>
+              <a class="go" id="go" href="#" rel="noopener"></a>
+              <p class="stake-status" id="stakeStatus" aria-live="polite"></p>
+            </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script src="config.js"></script>
+<script src="data.js"></script>
+<script src="wallet.js"></script>
+
+<script>
+(() => {
+  'use strict';
+  const DATA = { chains: {}, events: [], daily: [], loading: true, failed: [] };
+  const $ = id => document.getElementById(id);
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ── State ─────────────────────────────────────────────── */
+  const DEFAULTS = { view: 'charts', chain: 'all', metric: 'staked', days: 30, type: 'all', day: '' };
+  const PAGE = 8, MORE = 20;
+  const state = { ...DEFAULTS, limit: PAGE };
+  let shownView = null;
+
+  function set(key, value) {
+    if (!(key in DEFAULTS)) return;
+    value = key === 'days' ? Number(value) : value;
+    if (state[key] === value) return;
+    state[key] = value;
+    if (key !== 'metric') state.limit = PAGE;
+    if (key === 'chain' || key === 'days') state.day = '';
+    const changed = Object.keys(DEFAULTS).filter(k => state[k] !== DEFAULTS[k]).map(k => [k, state[k]]);
+    try { history.replaceState(null, '', changed.length ? '#' + new URLSearchParams(changed) : location.pathname + location.search); } catch {}
+    render();
+  }
+  function readHash() {
+    const p = new URLSearchParams(location.hash.slice(1));
+    state.limit = PAGE;
+    for (const k in DEFAULTS) state[k] = p.has(k) ? (k === 'days' ? Number(p.get(k)) : p.get(k)) : DEFAULTS[k];
+  }
+  document.addEventListener('click', e => {
+    const el = e.target.closest('button[data-key]');
+    if (el) set(el.dataset.key, el.dataset.value);
+  });
+  document.addEventListener('change', e => {
+    if (e.target.matches('select[data-key]')) set(e.target.dataset.key, e.target.value);
+  });
+  addEventListener('hashchange', () => { readHash(); render(); });
+
+  /* ── Formatting ────────────────────────────────────────── */
+  const usd = (v, d = 0) => '$' + v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const compact = v => { const a = Math.abs(v); return '$' + (a >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : a >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : v.toFixed(a < 10 ? 2 : 0)); };
+  const day = d => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const ago = d => { const m = Math.max(0, (Date.now() - d) / 6e4); return m < 1 ? 'now' : m < 60 ? (m | 0) + 'm' : m < 1440 ? (m / 60 | 0) + 'h' : m < 10080 ? (m / 1440 | 0) + 'd' : day(d); };
+  const selected = () => state.chain === 'all' ? Object.keys(DATA.chains) : [state.chain];
+  const sum = (obj) => selected().reduce((s, id) => s + (obj[id] || 0), 0);
+
+  // Rolling digits (odometer, à la NumberFlow): each digit is a 0–9 column that slides to its value.
+  // Same-shaped values roll in place; a new shape rolls up from zero. Screen readers get the plain text.
+  const COL = '<span class="col">' + '0123456789'.split('').map(d => `<span>${d}</span>`).join('') + '</span>';
+  function roll(el, text, animate = true) {
+    const shape = text.replace(/\d/g, '0');
+    if (reduced || !animate) { el.textContent = text; el._shape = null; return; }
+    let cols = el._cols;
+    if (el._shape !== shape) {
+      el.innerHTML = `<span class="sr"></span><span class="roll" aria-hidden="true">` +
+        [...text].map(c => /\d/.test(c) ? `<span>${COL}</span>` : `<span></span>`).join('') + '</span>';
+      [...el.querySelectorAll('.roll > span')].forEach((n, i) => { if (!/\d/.test(text[i])) n.textContent = text[i]; });
+      cols = el._cols = [...el.querySelectorAll('.col')];
+      el._shape = shape;
+      void el.offsetWidth;
+    }
+    el.firstChild.textContent = text;
+    [...text].filter(c => /\d/.test(c)).forEach((d, i) => cols[i].style.transform = `translateY(${-d * 10}%)`);
+  }
+  const svg = (parent, tag, attrs) => {
+    const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    return parent.appendChild(n);
+  };
+
+  /* ── Charts ────────────────────────────────────────────── */
+  let points = [];
+  function renderCharts() {
+    if (!DATA.daily.length) return;
+    const series = DATA.daily.slice(-state.days).map(d => ({ date: new Date(d.date), v: sum(d[state.metric]) }));
+    const isMoney = state.metric === 'staked';
+    const fmt = v => isMoney ? compact(v) : usd(v, v < 100 ? 2 : 0);
+    const first = series[0].v, last = series.at(-1).v, change = first ? (last - first) / first * 100 : 0;
+    roll($('perfValue'), fmt(last));
+    $('perfDelta').textContent = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
+    $('perfDelta').classList.toggle('neg', change < 0);
+    $('perfFrom').textContent = day(series[0].date);
+    $('perfTo').textContent = day(series.at(-1).date);
+
+    const W = 900, H = 300, pad = 24;
+    const vs = series.map(p => p.v), min = Math.min(...vs), max = Math.max(...vs), span = (max - min) || 1;
+    const lo = min - span * .3, hi = max + span * .2;
+    points = series.map((p, i) => ({ ...p, x: i / (series.length - 1) * W, y: H - pad - (p.v - lo) / (hi - lo) * (H - 2 * pad) }));
+    const el = $('perfSvg'); el.replaceChildren();
+    const g = svg(svg(el, 'defs', {}), 'linearGradient', { id: 'fill', x2: 0, y2: 1 });
+    svg(g, 'stop', { 'stop-color': '#111111', 'stop-opacity': .14 });
+    svg(g, 'stop', { offset: 1, 'stop-color': '#111111', 'stop-opacity': 0 });
+    [.25, .5, .75].forEach(t => svg(el, 'line', { class: 'grid', x1: 0, x2: W, y1: H * t, y2: H * t }));
+    const d = points.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join('');
+    svg(el, 'path', { d: d + `L${W},${H}L0,${H}Z`, fill: 'url(#fill)' });
+    svg(el, 'path', { d, class: 'line' });
+    const end = $('perfEnd');
+    end.style.cssText = `left:100%;top:${points.at(-1).y / H * 100}%;opacity:0`;
+    setTimeout(() => end.style.opacity = 1, reduced ? 0 : 1000);
+    $('perfUnit').hidden = isMoney;   // rewards are daily figures
+    $('perfPlot').setAttribute('aria-label', `${fmt(last)}${isMoney ? '' : ' per day'}, ${change.toFixed(2)}% over ${state.days} days. Arrow keys inspect each day.`);
+    inspect(null);
+  }
+  let cursor = null;
+  function inspect(i) {
+    const parts = ['perfRule', 'perfCursor', 'perfTip'].map($);
+    cursor = i;
+    if (i == null) return parts.forEach(p => p.hidden = true);
+    const p = points[i = cursor = Math.max(0, Math.min(points.length - 1, i))], box = $('perfPlot');
+    const x = p.x / 900 * 100, y = p.y / 300 * 100;
+    parts.forEach(n => n.hidden = false);
+    parts[0].style.left = x + '%';
+    parts[1].style.cssText = `left:${x}%;top:${y}%`;
+    parts[2].innerHTML = `<small>${day(p.date)}</small>${state.metric === 'staked' ? usd(p.v) : usd(p.v, 2) + ' / day'}`;
+    parts[2].style.left = Math.max(56, Math.min(box.clientWidth - 56, p.x / 900 * box.clientWidth)) + 'px';
+    parts[2].style.top = Math.max(44, p.y / 300 * box.clientHeight) + 'px';
+  }
+  const perfPlot = $('perfPlot');
+  perfPlot.addEventListener('pointermove', e => { const b = perfPlot.getBoundingClientRect(); inspect(Math.round((e.clientX - b.left) / b.width * (points.length - 1))); });
+  perfPlot.addEventListener('pointerleave', () => inspect(null));
+  perfPlot.addEventListener('blur', () => inspect(null));
+  perfPlot.addEventListener('keydown', e => {
+    const keys = { ArrowLeft: -1, ArrowRight: 1, Home: -Infinity, End: Infinity };
+    if (e.key === 'Escape') return inspect(null);
+    if (!(e.key in keys)) return;
+    e.preventDefault();
+    const k = keys[e.key];
+    inspect(Number.isFinite(k) ? (cursor ?? points.length - 1) + k : k < 0 ? 0 : points.length - 1);
+  });
+
+  /* ── Inflows ───────────────────────────────────────────── */
+  let flows = [], flowKey = '';
+  function renderInflows() {
+    const key = state.chain + '|' + state.days;
+    if (!DATA.daily.length) return rows($('flowRows'), []);
+    if (key !== flowKey) { flowKey = key; drawFlows(); }
+    renderFlowList();
+  }
+  function drawFlows() {
+    flows = DATA.daily.slice(-state.days).map(d => ({ date: new Date(d.date), v: sum(d.flows) }));
+    const net = flows.reduce((s, f) => s + f.v, 0);
+    roll($('netValue'), (net < 0 ? '−' : '+') + compact(Math.abs(net)));
+    $('netValue').classList.toggle('neg', net < 0);
+    $('flowFrom').textContent = day(flows[0].date);
+    $('flowTo').textContent = day(flows.at(-1).date);
+
+    const W = 900, H = 300, pad = 16, step = W / flows.length;
+    const bw = Math.max(2.5, Math.min(16, step * .55));
+    const up = Math.max(1, ...flows.map(f => f.v)), down = Math.max(up * .15, ...flows.map(f => -f.v));
+    const scale = (H - 2 * pad) / (up + down), zero = pad + up * scale;
+    const el = $('flowSvg'); el.replaceChildren();
+    [pad, zero, H - pad].forEach(y => svg(el, 'line', { class: 'grid', x1: 0, x2: W, y1: y, y2: y }));
+    const hatch = svg(svg(el, 'defs', {}), 'pattern', { id: 'hatch', width: 4, height: 4, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' });
+    svg(hatch, 'rect', { width: 4, height: 4, fill: '#ededeb' });
+    svg(hatch, 'line', { x1: 0, y1: 0, x2: 0, y2: 4, stroke: '#111', 'stroke-width': 1.6 });
+    const g = svg(el, 'g', { class: 'bars' });
+    flows.forEach((f, i) => {
+      const h = Math.max(1.5, Math.abs(f.v) * scale);
+      const r = svg(g, 'rect', { x: i * step + (step - bw) / 2, y: f.v >= 0 ? zero - h : zero, width: bw, height: h, fill: f.v >= 0 ? '#111' : 'url(#hatch)', stroke: f.v >= 0 ? 'none' : '#111', 'stroke-width': .8 });
+      r.style.transformOrigin = f.v >= 0 ? 'bottom' : 'top';
+      r.style.animationDelay = Math.min(500, i * 12) + 'ms';
+    });
+    $('flowPlot').setAttribute('aria-label', `Net ${net < 0 ? 'outflow' : 'inflow'} ${usd(Math.abs(net))} over ${state.days} days.`);
+  }
+  const iso = d => d.toISOString().slice(0, 10);
+  const pickedIndex = () => flows.findIndex(f => iso(f.date) === state.day);
+  function highlight(i) {
+    const g = flowPlot.querySelector('.bars');
+    g.classList.toggle('hover', i >= 0);
+    [...g.children].forEach((r, k) => r.classList.toggle('on', k === i));
+  }
+  function renderFlowList(fresh) {
+    const from = flows[0].date;
+    const list = DATA.events.filter(e => FLOWS.includes(e.type) && (state.chain === 'all' || e.chain === state.chain) &&
+      new Date(e.date) >= from && (!state.day || e.date.slice(0, 10) === state.day));
+    const chip = $('dayChip');
+    chip.hidden = !state.day;
+    if (state.day) chip.textContent = day(new Date(state.day)) + '  ✕';
+    highlight(pickedIndex());
+    rows($('flowRows'), list, fresh);
+  }
+  const flowPlot = $('flowPlot');
+  const barAt = e => { const b = flowPlot.getBoundingClientRect(); return Math.max(0, Math.min(flows.length - 1, Math.floor((e.clientX - b.left) / b.width * flows.length))); };
+  flowPlot.addEventListener('pointermove', e => {
+    const i = barAt(e), b = flowPlot.getBoundingClientRect(), tip = $('flowTip'), f = flows[i];
+    highlight(i);
+    tip.hidden = false;
+    tip.innerHTML = `<small>${day(f.date)}</small>${f.v < 0 ? '−' : '+'}${usd(Math.abs(f.v))}`;
+    tip.style.left = Math.max(56, Math.min(b.width - 56, (i + .5) / flows.length * b.width)) + 'px';
+    tip.style.top = '40px';
+  });
+  flowPlot.addEventListener('pointerleave', () => { $('flowTip').hidden = true; highlight(pickedIndex()); });
+  flowPlot.addEventListener('click', e => { const d = iso(flows[barAt(e)].date); set('day', state.day === d ? '' : d); });
+  flowPlot.addEventListener('keydown', e => {
+    const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+    if (e.key === 'Escape') return set('day', '');
+    if (!step) return;
+    e.preventDefault();
+    const cur = pickedIndex(), i = Math.max(0, Math.min(flows.length - 1, (cur < 0 ? flows.length : cur) + step));
+    set('day', iso(flows[i].date));
+  });
+
+  /* ── Explorer ──────────────────────────────────────────── */
+  // Event types. Redelegations carry dir: 'in' | 'out'. 'unbonded' = unbonding period finished, tokens returned.
+  const ICON = {   // Lucide icon paths (ISC licence)
+    delegation: 'M17 7 7 17M17 17H7V7',
+    undelegation: 'M7 7h10v10M7 17 17 7',
+    redelegation: 'm8 3-4 4 4 4M4 7h16m-4 14 4-4-4-4m4 4H4',
+    unbonded: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zm-3-10 2 2 4-4',
+    vote: 'm9 12 2 2 4-4M5 7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v12H5V7zm17 12H2'
+  };
+  const isOut = e => e.type === 'undelegation' || e.type === 'unbonded' || (e.type === 'redelegation' && e.dir === 'out');
+  const FAMILY = { delegation: ['delegation'], redelegation: ['redelegation'], undelegation: ['undelegation', 'unbonded'], vote: ['vote'] };
+  const FLOWS = ['delegation', 'undelegation', 'redelegation', 'unbonded'];
+  function rows(box, list, fresh) {
+    const shown = list.slice(0, state.limit);
+    if (!list.length) {
+      const p = document.createElement('p'); p.className = 'empty';
+      p.textContent = DATA.loading ? 'Loading…' : Object.keys(DATA.chains).length ? 'No transactions' : 'Couldn’t reach the networks. Retrying…';
+      box.replaceChildren(p);
+    }
+    else box.replaceChildren(...shown.map(e => {
+      const row = document.createElement(e.hash ? 'a' : 'div');
+      if (e.hash) { row.href = DATA.chains[e.chain].txUrl(e.hash); row.target = '_blank'; row.rel = 'noopener'; }
+      row.className = 'row' + (e === fresh ? ' new' : '');
+      const when = new Date(e.date), chain = DATA.chains[e.chain].name;
+      row.innerHTML = `<div class="what"><svg class="ev-icon${isOut(e) ? ' out' : ''}" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICON[e.type]}"/></svg><div><span></span><span class="sub"></span></div></div>
+        <div class="where"></div><div class="num"></div><time class="num"></time>`;
+      row.querySelector('.what span:not(.sub)').textContent = e.text;
+      row.querySelector('.sub').textContent = chain + ' · ' + ago(when);
+      row.querySelector('.where').textContent = chain;
+      row.querySelector('div.num').textContent = e.detail;
+      const unbondsAt = e.type === 'undelegation' && +new Date(e.unbondsAt || +when + DATA.chains[e.chain].unbonding * 864e5);
+      if (unbondsAt > Date.now()) {
+        const due = document.createElement('small');
+        due.className = 'due'; due.textContent = 'unbonds ' + day(new Date(unbondsAt));
+        row.querySelector('div.num').append(due);
+      }
+      const t = row.querySelector('time');
+      t.dateTime = e.date; t.title = when.toUTCString(); t.textContent = ago(when);
+      return row;
+    }));
+    const more = box.nextElementSibling;
+    more.hidden = list.length <= state.limit;
+  }
+  function renderExplorer(fresh) {
+    rows($('rows'), DATA.events.filter(e => (state.chain === 'all' || e.chain === state.chain) && (state.type === 'all' || FAMILY[state.type]?.includes(e.type))), fresh);
+  }
+  document.addEventListener('click', e => { if (e.target.closest('[data-more]')) { state.limit += MORE; VIEWS[state.view](); } });
+
+  /* ── Stake ─────────────────────────────────────────────── */
+  // The only network selector: a chain switcher (current logo → menu of supported chains).
+  const ALL_LOGO = `<svg class="logo" viewBox="0 0 30 30" aria-hidden="true"><circle cx="15" cy="15" r="15" fill="#111"/><path d="M15 6l4 4-4 4-4-4zM15 16l4 4-4 4-4-4zM10 11l4 4-4 4-4-4zM20 11l4 4-4 4-4-4z" fill="#f6f6f4"/></svg>`;
+  const logoOf = id => id === 'all' || !DATA.chains[id] ? ALL_LOGO : `<img class="logo" src="${DATA.chains[id].icon}" alt="">`;
+  const nameOf = id => id === 'all' || !DATA.chains[id] ? 'All networks' : DATA.chains[id].name;
+  const menu = $('menu'), switchBtn = $('switchBtn');
+  function buildMenu() {
+    menu.innerHTML = `<button class="all" role="menuitemradio" data-key="chain" data-value="all">${ALL_LOGO}<span>All networks</span></button><hr>` +
+      Object.keys(DATA.chains).map(id => `<button role="menuitemradio" data-key="chain" data-value="${id}">${logoOf(id)}<span>${nameOf(id)}</span></button>`).join('');
+  }
+  const items = () => [...menu.querySelectorAll('button')].filter(b => b.offsetParent);
+  function openMenu(open) {
+    menu.hidden = !open;
+    switchBtn.setAttribute('aria-expanded', String(open));
+    if (open) (items().find(b => b.getAttribute('aria-checked') === 'true') || items()[0]).focus();
+  }
+  switchBtn.addEventListener('click', () => openMenu(menu.hidden));
+  menu.addEventListener('click', e => { if (e.target.closest('button')) { openMenu(false); switchBtn.focus(); } });
+  document.addEventListener('pointerdown', e => { if (!menu.hidden && !e.target.closest('.switch')) openMenu(false); });
+  document.addEventListener('keydown', e => {
+    if (menu.hidden) return;
+    if (e.key === 'Escape') { openMenu(false); switchBtn.focus(); return; }
+    const list = items(), i = list.indexOf(document.activeElement);
+    const next = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: list.length - 1 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    list[(next + list.length) % list.length].focus();
+  });
+  function renderSwitch() {
+    $('switchLogo').innerHTML = logoOf(state.chain);
+    switchBtn.setAttribute('aria-label', 'Network: ' + nameOf(state.chain));
+    switchBtn.title = nameOf(state.chain);
+    menu.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.value === state.chain)));
+  }
+
+  function renderStake(animate = true) {
+    const c = DATA.chains[state.chain], panel = $('panel');
+    panel.classList.toggle('idle', !c);
+    $('amount').disabled = !c;
+    $('go').setAttribute('aria-disabled', String(!c));
+    if (!c) {
+      // Nothing to stake on "all networks": the logo row above is the way in.
+      ['pName', 'token'].forEach(id => $(id).textContent = '');
+      ['pApr', 'pYear'].forEach(id => roll($(id), '—', 0));
+      $('projSvg').replaceChildren(); $('projEnd').style.cssText = 'opacity:0';
+      $('go').removeAttribute('href'); $('go').dataset.mode = ''; $('go').textContent = 'Choose a network';
+      if (animate && !reduced) { switchBtn.classList.remove('nudge'); void switchBtn.offsetWidth; switchBtn.classList.add('nudge'); }
+      return;
+    }
+    const amt = Math.max(0, parseFloat($('amount').value.replace(/,/g, '')) || 0);
+    const rate = (c.apr || 0) / 100;      // delegator APR: chain APR after this validator's commission
+    const tok = v => v.toLocaleString('en-US', { maximumFractionDigits: v < 1 ? 4 : 2 }) + ' ' + c.token;
+    $('pIcon').src = c.icon;
+    $('pName').textContent = c.name;
+    $('token').textContent = c.token;
+    roll($('pApr'), c.apr == null ? '—' : c.apr.toFixed(1) + '%', animate ? 420 : 0);
+    roll($('pYear'), c.apr == null ? '—' : tok(amt * rate), animate ? 420 : 200);
+    stakeButton(c, amt);
+
+    // 12-month projection, rewards compounded monthly
+    const W = 300, H = 84, pts = Array.from({ length: 13 }, (_, m) => amt * Math.pow(1 + rate / 12, m));
+    const lo = pts[0], hi = pts[12] || 1, y = v => hi > lo ? H - 6 - (v - lo) / (hi - lo) * (H - 18) : H / 2;
+    const d = pts.map((v, m) => (m ? 'L' : 'M') + (m / 12 * W).toFixed(1) + ',' + y(v).toFixed(1)).join('');
+    const el = $('projSvg'); el.replaceChildren();
+    const g = svg(svg(el, 'defs', {}), 'linearGradient', { id: 'projFill', x2: 0, y2: 1 });
+    svg(g, 'stop', { 'stop-color': '#111', 'stop-opacity': .1 });
+    svg(g, 'stop', { offset: 1, 'stop-color': '#111', 'stop-opacity': 0 });
+    svg(el, 'line', { class: 'grid', x1: 0, x2: W, y1: y(lo), y2: y(lo), 'stroke-dasharray': '2 4' });
+    svg(el, 'path', { d: d + `L${W},${H}L0,${H}Z`, fill: 'url(#projFill)' });
+    svg(el, 'path', { d, class: 'line' + (animate ? '' : ' still') });
+    $('projEnd').style.cssText = `left:100%;top:${y(pts[12]) / H * 100}%`;
+    if (animate && !reduced) { panel.classList.remove('in'); void panel.offsetWidth; panel.classList.add('in'); }
+  }
+  $('amount').addEventListener('input', () => { $('stakeStatus').textContent = ''; renderStake(false); });
+
+  const ARROW = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 10 10 2M4 2h6v6" stroke="currentColor" stroke-width="1.6"/></svg>';
+  function stakeButton(c, amt) {
+    const go = $('go'), inPage = c.wallet && window.CyberneticsWallet.available();
+    go.dataset.mode = inPage ? 'wallet' : 'link';
+    if (inPage) {
+      go.href = '#'; go.removeAttribute('target');
+      go.setAttribute('aria-disabled', String(!(amt > 0)));
+      go.textContent = amt > 0 ? `Delegate ${amt.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${c.token}` : 'Enter an amount';
+    } else {
+      go.href = c.keplrUrl; go.target = '_blank';
+      go.setAttribute('aria-disabled', 'false');
+      go.innerHTML = `Delegate ${c.token} on Keplr ${ARROW}`;
+    }
+  }
+  $('go').addEventListener('click', async e => {
+    const go = $('go'), c = DATA.chains[state.chain], status = $('stakeStatus');
+    if (go.dataset.mode !== 'wallet' || !c) return;
+    e.preventDefault();
+    status.className = 'stake-status'; status.textContent = '';
+    go.setAttribute('aria-busy', 'true'); go.textContent = 'Confirm in your wallet…';
+    try {
+      const { hash } = await window.CyberneticsWallet.delegate(c, $('amount').value);
+      status.innerHTML = `Delegated. <a href="${c.txUrl(hash)}" target="_blank" rel="noopener">View transaction</a>`;
+      setTimeout(() => refreshChain(c), 8000);
+    } catch (err) {
+      status.className = 'stake-status err'; status.textContent = err.message;
+    } finally {
+      go.removeAttribute('aria-busy');
+      renderStake(false);
+    }
+  });
+  $('panel').addEventListener('pointermove', e => {
+    const b = e.currentTarget.getBoundingClientRect();
+    e.currentTarget.style.setProperty('--x', e.clientX - b.left + 'px');
+    e.currentTarget.style.setProperty('--y', e.clientY - b.top + 'px');
+  });
+
+  /* ── Render ────────────────────────────────────────────── */
+  const VIEWS = { charts: renderCharts, explorer: renderExplorer, inflows: renderInflows, stake: renderStake };
+  document.querySelectorAll('[data-periods]').forEach(g => g.innerHTML = [7, 30, 90].map(d => `<button data-key="days" data-value="${d}">${d}D</button>`).join(''));
+
+  function render() {
+    if (!(state.view in VIEWS)) state.view = DEFAULTS.view;
+    document.querySelectorAll('button[data-key]').forEach(b => {
+      const on = String(state[b.dataset.key]) === b.dataset.value;
+      b.dataset.key === 'view' ? (on ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')) : b.setAttribute('aria-pressed', String(on));
+    });
+    document.querySelectorAll('.view').forEach(v => {
+      const on = v.dataset.view === state.view;
+      v.hidden = !on;
+      if (on && shownView && shownView !== state.view && !reduced) { v.classList.remove('in'); void v.offsetWidth; v.classList.add('in'); }
+    });
+    document.body.dataset.view = state.view;
+    renderSwitch();
+    if (heightOf && heightChain() && heightOf !== heightChain().id) tickHeight();
+    const entering = shownView !== state.view;
+    shownView = state.view;
+    placeInk();
+    placeThumbs();
+    if (entering) flowKey = '';
+    if (entering && state.view === 'charts') {
+      // Replay the one-shot scan and end-point pulse each time Charts is entered.
+      const scan = document.querySelector('.scan'), end = $('perfEnd');
+      scan.classList.remove('play'); end.classList.remove('end'); void scan.offsetWidth;
+      scan.classList.add('play'); end.classList.add('end');
+    }
+    VIEWS[state.view]();
+  }
+  function placeThumbs() {
+    document.querySelectorAll('.seg').forEach(seg => {
+      const on = seg.querySelector('[aria-pressed="true"]');
+      const t = seg.querySelector('.thumb') || seg.appendChild(Object.assign(document.createElement('span'), { className: 'thumb' }));
+      t.style.opacity = on && on.offsetWidth ? 1 : 0;
+      if (!on || !on.offsetWidth) return;
+      if (!t.dataset.placed) { t.style.transition = 'none'; t.dataset.placed = '1'; requestAnimationFrame(() => requestAnimationFrame(() => t.style.transition = '')); }
+      t.style.width = on.offsetWidth + 'px'; t.style.transform = `translateX(${on.offsetLeft}px)`;
+    });
+  }
+  function placeInk() {
+    const tab = document.querySelector('.tabs [aria-current]'), ink = document.querySelector('.ink');
+    ink.style.opacity = tab ? 1 : 0;
+    if (tab) { ink.style.left = tab.offsetLeft + 'px'; ink.style.width = tab.offsetWidth + 'px'; }
+  }
+  addEventListener('resize', () => { placeInk(); placeThumbs(); }, { passive: true });
+
+  /* ── Live API ──────────────────────────────────────────── */
+  let height = 0;
+  window.cybernetics = {
+    state, set, data: DATA,
+    push(event) {
+      DATA.events.unshift(event);
+      if (state.view === 'explorer') renderExplorer(event);
+      if (state.view === 'inflows' && FLOWS.includes(event.type)) renderFlowList(event);
+    },
+    block(h) {
+      if (h === height) return;
+      height = h; roll($('height'), h.toLocaleString('en-US'));
+      const led = document.querySelector('.led'); led.classList.remove('beat'); void led.offsetWidth; led.classList.add('beat');
+    }
+  };
+
+  /* ── Live data ───────────────────────────────────────────── */
+  const known = new Set();
+  const heightChain = () => DATA.chains[state.chain] || Object.values(DATA.chains)[0];
+  let heightOf = null;
+  async function tickHeight() {
+    const c = heightChain();
+    if (!c || document.hidden) return;
+    if (heightOf !== c.id) { heightOf = c.id; height = 0; }
+    try { cybernetics.block(await window.CyberneticsData.height(c)); } catch {}
+  }
+  async function refreshChain(c) {
+    try {
+      const fresh = (await window.CyberneticsData.recent(c)).filter(e => !known.has(e.key)).sort((a, b) => a.date.localeCompare(b.date));
+      fresh.forEach(e => { known.add(e.key); cybernetics.push(e); });
+    } catch {}
+  }
+  async function boot() {
+    document.body.classList.add('loading');
+    DATA.loading = true; render();
+    const data = await window.CyberneticsData.load();
+    Object.assign(DATA, data, { loading: false });
+    DATA.events.forEach(e => known.add(e.key));
+    document.body.classList.remove('loading');
+    if (!Object.keys(DATA.chains).length) { render(); setTimeout(boot, 30000); return; }
+    if (state.chain !== 'all' && !DATA.chains[state.chain]) state.chain = 'all';
+    buildMenu();
+    flowKey = ''; shownView = null;
+    render();
+    tickHeight(); setInterval(tickHeight, 6000);
+    setInterval(() => { if (!document.hidden) Object.values(DATA.chains).forEach(refreshChain); }, 60000);
+  }
+  /* ───────────────────────────────────────────────────────── */
+
+  readHash();
+  boot();
+})();
+</script>
+</body>
+</html>

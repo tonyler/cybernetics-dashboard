@@ -1,0 +1,7 @@
+{
+  "name": "cybernetics-dashboard",
+  "private": true,
+  "description": "Live validator dashboard for The Cybernetics. Static site; npm is only used for tests.",
+  "scripts": { "test": "node tests/encoding.test.mjs" },
+  "devDependencies": { "cosmjs-types": "0.9.0" }
+}

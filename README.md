@@ -64,7 +64,7 @@ where the validator can't be found is hidden automatically.
 |---|---|
 | Total staked | Validator `tokens` (chain REST) × USD price |
 | Prices | CoinGecko: current price each run, 90 days of daily prices once a day (token id from the chain registry) |
-| APR | **Measured**: one real delegation per network is followed between runs; reward growth ÷ stake ÷ time, averaged over 24 h. Net of commission, fees included. Falls back to cosmos.directory `calculated_apr` × (1 − commission) until two readings exist. |
+| APR | **Externally sourced** from cosmos.directory `calculated_apr`, falling back to `estimated_apr`. Displayed delegator APR adjusts the provider's network rate for this validator's commission; unavailable provider rates remain unavailable. No local reward sampling. |
 | Staker / operator rewards per day | stake × APR ÷ 365 for stakers; the operator's commission is the rest of the gross; each day at that day's price |
 | Delegations, undelegations, redelegations | On-chain transaction search (`delegate`, `unbond`, `redelegate` events); counterparty names from the chain's full validator set |
 | Unbonding complete | `completion_time` of each undelegation (falls back to the chain's unbonding period) |

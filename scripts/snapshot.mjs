@@ -109,16 +109,22 @@ for (const id of fresh) {
    Nolus: official app staking APR. Others: cosmos.directory provider APR.
    Do not use inflation-based fallbacks for Osmosis or Nolus. */
 await Promise.all(['osmosis', 'nolus'].filter(id => chains[id]).map(async id => {
-  let reading = null;
+  let reading = null, error = null;
   try {
     if (fresh.has(id)) {
       reading = await externalApr(id, {
         base: process.env.API_BASE?.replace(/\/$/, '') || '',
         numiaKey: process.env.NUMIA_API_KEY || ''
       });
-    }
-  } catch (err) { console.warn(`  ${id}: external APR unavailable (${err.message})`); }
+    } else error = 'On-chain validator data unavailable';
+  } catch (err) {
+    error = err.message;
+    console.warn(`  ${id}: external APR unavailable (${error})`);
+  }
   chains[id] = chooseApr(id, chains[id], prev?.chains?.[id], reading);
+  chains[id].aprCheckedAt = new Date().toISOString();
+  chains[id].aprError = error;
+  if (chains[id].apr == null) console.warn(`  ${id}: no verified staking APR; not publishing a misleading 0%`);
 }));
 for (const id of fresh) {
   const c = chains[id];

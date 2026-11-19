@@ -65,7 +65,7 @@ where the validator can't be found is hidden automatically.
 | Total staked | Validator `tokens` (chain REST) × USD price |
 | Prices | CoinGecko: current price each run, 90 days of daily prices once a day (token id from the chain registry) |
 | APR | **External APIs only**: Osmosis uses Numia's published staking APR, Nolus uses the official Nolus governance APR API; both use rewards-based Staking Explorer as a fallback, and other networks use cosmos.directory `calculated_apr` (or `estimated_apr`). Delegator APR is displayed net of validator commission. Neither network falls back to inflation-derived APR. Zero or missing readings trigger the independent reward-distribution APR source; the last verified external APR is kept for at most 72 hours if both sources fail, then shown as unavailable. No local reward sampling. |
-| Staker / operator rewards per day | stake × APR ÷ 365 for stakers; the operator's commission is the rest of the gross; each day at that day's price |
+| Staker / operator rewards per day | **Estimated** from that date's recorded gross chain APR: daily gross tokens = validator stake × gross APR ÷ 365; stakers receive (1 − validator commission), operator commission is the remainder; each valued at that date's token price. Missing historical APRs display unavailable rather than invented zeros. |
 | Delegations, undelegations, redelegations | On-chain transaction search (`delegate`, `unbond`, `redelegate` events); counterparty names from the chain's full validator set |
 | Unbonding complete | `completion_time` of each undelegation (falls back to the chain's unbonding period) |
 | Votes | `proposal_vote` events from the validator's own account |
@@ -78,8 +78,8 @@ where the validator can't be found is hidden automatically.
 - **History depth**: 90 days by default (`history.days`), capped at `history.maxPages × 100` transactions per
   event type, and limited by what public nodes keep indexed (some prune old transactions). For multi-year
   history, point `data.js` at an indexer.
-- **Past values** use the stake and price recorded by the snapshot job each day. Days before the job started are
-  rebuilt from today's stake minus later flows, at today's price.
+- **Past values** use the stake, price, and gross APR recorded by the snapshot job each day. Days before staking APR tracking started have **unknown estimated rewards** (chart gaps, not zero). Missing historical stake/price may still be reconstructed from today's stake and later flows at today's price; these are estimates, not payouts.
+- **APR is chain-wide**: the scraper's chain staking APR is treated as the pre-validator-commission rate, then adjusted for this validator's commission. Actual delegator and validator income can vary with reward composition, commission changes, performance, self-delegations, and distribution timing. The dashboard does not measure actual reward withdrawals.
 - Public endpoints come and go. If a network fails to load it's left out and logged in the console as `[cybernetics]`.
 
 ## APR API sources

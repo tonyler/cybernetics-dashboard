@@ -90,11 +90,15 @@ where the validator can't be found is hidden automatically.
 - Other networks: Cosmos Directory. All displayed delegator APRs account for validator commission.
 - If an APR endpoint is unavailable, the snapshot keeps a verified rate from either approved provider for up to 72 hours; it never substitutes inflation-only estimates. The snapshot records `aprSource`, `aprFetchedAt`, `aprAsOf`, `aprCheckedAt`, and `aprError` for diagnostics.
 
+## Keplr staking APR collector
+
+The snapshot also checks `https://tonyler.is-not-a.dev/scraper/api` for the six native chains. Its values are scraped directly from the **Staking APR** shown on each Keplr Dashboard chain page (not APY or inflation). Values are used as displayed, without another commission deduction. Missing or stale readings fall back to the previously configured APR sources. To override the URL, set `APR_COLLECTOR_URL` in the snapshot GitHub Actions environment. The collector runs separately from GitHub Pages in [tonyler/Apr-scraper](https://github.com/tonyler/Apr-scraper); the Pages site itself remains static. It must first be deployed behind HTTPS on the user's server.
+
 ## Tests
 
 ```sh
 npm install && npm test
-node --test tests/provider-apr.test.mjs          # transaction encoding matches CosmJS byte-for-byte
+node --test tests/provider-apr.test.mjs tests/remote-apr.test.mjs          # transaction encoding matches CosmJS byte-for-byte
 pip install playwright && playwright install chromium
 python3 tests/snapshot_test.py   # snapshot job → site: incremental runs, visitors make zero chain API calls
 python3 tests/e2e.py             # fallback mode against mocked chain APIs (3 SDK formats, wallet flow, uptime)

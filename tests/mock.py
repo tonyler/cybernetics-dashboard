@@ -20,6 +20,7 @@ COSMOS_VAL='cosmosvaloper18m9wncg0w74vusm4xu0mk6ha2lpdrqq7c9cjq3'
 OSMO_VAL='osmovaloper10w06wvmdd4xn7hr76gzrv570f7q5uweem5jcd7'
 DYM_VAL='dymvaloper1x4dhky07zxuaew2ru7tgvtd68vjk3x56w5p5lh'
 JUNO_VAL='junovaloper1yfx5x9cs3nvncprlw0kuw2cgs9qq38uqnwfhd8'
+NOLUS_VAL='nolusvaloper106sz33gddhvve5r3hq4hvyzxakd7ntw9duc6c5'
 PEER=bech('cosmosvaloper', [7]*32); PEER2=bech('osmovaloper', [9]*32)
 acct = lambda val, hrp: bech(hrp, data_of(val))
 now=time.time()
@@ -43,6 +44,7 @@ VALS={
  'cosmoshub':{COSMOS_VAL:('The_Cybernetics','2160000000000','0.050000000000000000'),PEER:('Northstake','1','0.1')},
  'osmosis':{OSMO_VAL:('The_Cybernetics','2680000000000','0.050000000000000000'),PEER2:('Helix Nodes','1','0.1')},
  'juno':{JUNO_VAL:('The_Cybernetics','1400000000000','0.050000000000000000')},
+ 'nolus':{NOLUS_VAL:('The_Cybernetics','250000000000','0.050000000000000000')},
  'dymension':{DYM_VAL:('The_Cybernetics','633000000000000000000000','0.050000000000000000')},
 }
 

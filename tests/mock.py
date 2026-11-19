@@ -103,6 +103,13 @@ def handle(route):
                    {'symbol':'total','labels':today+' 00:00:00','apr':5.2}])
     if p.hostname=='app.nolus.io' and path=='/api/governance/apr':
         return ok({'apr':0.045,'annualInflation':0})
+    if p.hostname=='staking-explorer.com':
+        network=path.rsplit('/',1)[-1]
+        if network in ('osmosis','nolus'):
+            rate=5.32 if network=='osmosis' else 4.78
+            name='Osmosis' if network=='osmosis' else 'Nolus'
+            return route.fulfill(status=200,content_type='text/html',body=f'<h4>{name} staking APR</h4><h3>APR {rate}%</h3>')
+        return route.fulfill(status=404,content_type='text/html',body='not found')
     if p.hostname=='chains.cosmos.directory':
         n=path.strip('/');  return ok(CHAINS[n]) if n in CHAINS else ok({'error':'x'},500)
     if p.hostname=='validators.cosmos.directory':

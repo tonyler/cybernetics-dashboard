@@ -12,6 +12,7 @@
        OUT        output path (default data/snapshot.json)
        COINGECKO_API_KEY  optional CoinGecko demo key (repository secret), for higher rate limits
        NUMIA_API_KEY     optional Numia key for higher rate limits
+       APR_COLLECTOR_URL public read-only Keplr APR collector API URL
        API_BASE   test-only: route all API calls to a local mock
 */
 import fs from 'node:fs';
@@ -19,6 +20,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { externalApr, chooseApr } from './provider-apr.mjs';
+import { fetchRemoteApr } from './remote-apr.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.resolve(ROOT, process.env.OUT || 'data/snapshot.json');
@@ -129,6 +131,30 @@ await Promise.all(['osmosis', 'nolus'].filter(id => chains[id]).map(async id => 
 for (const id of fresh) {
   const c = chains[id];
   console.log(`  ${id}: APR ${c.apr == null ? '— (provider unavailable)' : c.apr.toFixed(2) + '%'} (${c.aprSource || 'cosmos.directory'}), ${c.price}`);
+}
+
+/* Keplr APR scraper: prefer the displayed rate from our public Playwright service.
+   It is already a displayed staking APR; do not deduct commission again.
+   The old external providers remain as fallback until the service is online. */
+const collectorUrl = process.env.APR_COLLECTOR_URL ||
+  (process.env.API_BASE ? '' : 'https://tonyler.is-not-a.dev/scraper/api');
+if (collectorUrl) {
+  try {
+    const remote = await fetchRemoteApr(collectorUrl);
+    for (const [id, value] of Object.entries(remote)) {
+      if (!value || !chains[id]) continue;
+      const c = chains[id];
+      c.apr = value.netApr; // exactly the percent shown by Keplr
+      c.chainApr = c.commission < 1 ? value.netApr / 100 / (1 - c.commission) : null;
+      c.aprSource = 'keplr-dashboard';
+      c.aprAsOf = value.asOf;
+      c.aprFetchedAt = new Date().toISOString();
+      c.aprError = null;
+      console.log(`  ${id}: APR ${c.apr.toFixed(2)}% (Keplr Dashboard)`);
+    }
+  } catch (err) {
+    console.warn('  Keplr APR collector unavailable: ' + err.message);
+  }
 }
 
 // Today's stake, per network (prices per day come from CoinGecko above).

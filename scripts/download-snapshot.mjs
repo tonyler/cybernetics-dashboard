@@ -18,7 +18,8 @@ try {
 if(!payload || typeof payload!=='object' || !payload.generatedAt ||
    !payload.chains || Object.keys(payload.chains).length<1 ||
    !Array.isArray(payload.events) || !payload.history || typeof payload.history!=='object' ||
-   !payload.coverage || typeof payload.coverage!=='object' || !payload.uptime || typeof payload.uptime!=='object')
+   !payload.coverage || typeof payload.coverage!=='object' || !payload.uptime || typeof payload.uptime!=='object' ||
+   !payload.uptimeBlocks || typeof payload.uptimeBlocks!=='object')
   throw Error('Invalid server snapshot shape');
 const generated=Date.parse(payload.generatedAt);
 if(!Number.isFinite(generated)||generated>Date.now()+60000||Date.now()-generated>2*3600000)

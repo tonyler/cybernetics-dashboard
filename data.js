@@ -268,14 +268,22 @@
         const i = days - 1 - Math.round((+today - +d) / DAY);
         if (i >= 0 && i < days) net[i] += e.amount;
       }
+      // Current published APR is the projection baseline for dates without
+      // historical APR observations. This restores the pre-tracking charts while
+      // retaining each day's recorded APR when it exists. Never write the
+      // fallback into history: estimated backfills are not observed APRs.
+      const currentApr = c.chainApr != null && Number.isFinite(c.chainApr) && c.chainApr >= 0
+        ? c.chainApr : null;
+      const recordedApr = daily.map(d => history[d.date.slice(0, 10)]?.[c.id]?.chainApr)
+        .filter(v => v != null && Number.isFinite(v) && v >= 0);
+      const baselineApr = currentApr ?? recordedApr.at(-1) ?? null;
       let later = 0;                                   // net flow after day i
       for (let i = days - 1; i >= 0; i--) {
         const rec = history[daily[i].date.slice(0, 10)]?.[c.id];
         const staked = rec?.tokens ?? Math.max(0, c.tokens - later), price = rec?.price ?? c.price;
-        // Historical reward estimates use ONLY the APR recorded on that day.
-        // Older days without an APR observation are unknown (null), not zero.
-        // Current day may use the latest live provider APR before it is recorded.
-        const grossApr = rec?.chainApr ?? (i === days - 1 ? c.chainApr : null);
+        // Prefer the APR observed on this date; otherwise estimate using the
+        // latest published/recorded APR. Backfilled rewards are estimates only.
+        const grossApr = rec?.chainApr ?? baselineApr;
         const hasApr = grossApr != null && Number.isFinite(grossApr) && grossApr >= 0;
         const grossDaily = hasApr ? staked * grossApr / 365 : null;
         const stakers = grossDaily == null ? null : grossDaily * (1 - c.commission);

@@ -36,7 +36,7 @@ jobs:
           key: snapshot-${{ github.run_id }}
           restore-keys: snapshot-
       - name: Test APR adapters
-        run: node --test tests/provider-apr.test.mjs
+        run: node --test tests/provider-apr.test.mjs tests/remote-apr.test.mjs
       - name: Snapshot
         run: node scripts/snapshot.mjs
         env:

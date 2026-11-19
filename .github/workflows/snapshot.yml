@@ -35,11 +35,14 @@ jobs:
           path: data/snapshot.json
           key: snapshot-${{ github.run_id }}
           restore-keys: snapshot-
+      - name: Test APR adapters
+        run: node --test tests/provider-apr.test.mjs
       - name: Snapshot
         run: node scripts/snapshot.mjs
         env:
           SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}   # optional
+          NUMIA_API_KEY: ${{ secrets.NUMIA_API_KEY }}           # optional
       - name: Save snapshot for the next run
         uses: actions/cache/save@v4
         with:

@@ -226,7 +226,9 @@
     const { validator: v } = await get(`${API.rest}${cfg.registry}/cosmos/staking/v1beta1/validators/${valoper}`);
     const decimals = meta.decimals ?? 6;
     const commission = Number(v.commission?.commission_rates?.rate ?? 0);
-    const chainApr = meta.params?.calculated_apr ?? meta.params?.estimated_apr ?? null;
+    const providedApr = meta.params?.calculated_apr ?? meta.params?.estimated_apr;
+    const chainApr = providedApr != null && Number.isFinite(Number(providedApr)) && Number(providedApr) >= 0
+      ? Number(providedApr) : null;
     const prices = meta.prices?.coingecko || {};
     const fee = (meta.fees?.fee_tokens || []).find(f => f.denom === meta.denom) || {};
     const c = {
@@ -235,7 +237,7 @@
       account: withPrefix(valoper, meta.bech32_prefix),
       prefix: meta.bech32_prefix, consensusKey: v.consensus_pubkey?.key, active: v.status === 'BOND_STATUS_BONDED',
       tokens: Number(v.tokens) / 10 ** decimals, commission, chainApr,
-      apr: chainApr == null ? null : chainApr * (1 - commission) * 100,     // what a delegator earns
+      apr: chainApr == null ? null : chainApr * (1 - commission) * 100,     // provider APR, net of validator commission
       price: prices[meta.display]?.usd ?? prices[String(meta.symbol).toLowerCase()]?.usd ?? 0,
       coingeckoId: cfg.coingecko || meta.coingecko_id || null,
       unbonding: Math.round((meta.params?.unbonding_time ?? 21 * 86400) / 86400),

@@ -113,7 +113,7 @@ await Promise.all(['osmosis', 'nolus'].filter(id => chains[id]).map(async id => 
   try {
     if (fresh.has(id)) {
       reading = await externalApr(id, {
-        base: process.env.API_BASE?.replace(/\\/$/, '') || '',
+        base: process.env.API_BASE?.replace(/\/$/, '') || '',
         numiaKey: process.env.NUMIA_API_KEY || ''
       });
     }

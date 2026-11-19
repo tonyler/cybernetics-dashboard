@@ -1,4 +1,5 @@
-"""End-to-end: the real page against mocked cosmos.directory + chain REST APIs (see mock.py)."""
+"""End-to-end, fallback mode (no data/snapshot.json, page reads the chains itself) against mocked APIs (mock.py).
+The normal mode (snapshot job → visitors) is covered by snapshot_test.py."""
 import asyncio, json, base64, sys
 import pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -65,7 +66,7 @@ asyncio.run(main())
 
 
 async def speed():
-    """Stake must appear before slow history finishes; a return visit must paint from the browser cache."""
+    """Without a snapshot, stake must appear before slow history finishes."""
     import time as _t
     async with async_playwright() as p:
         b = await p.chromium.launch(); ctx = await b.new_context(viewport={'width': 1280, 'height': 900}); pg = await ctx.new_page()
@@ -79,16 +80,12 @@ async def speed():
         await pg.wait_for_function("!document.body.classList.contains('loading')", timeout=60000)
         done = _t.time() - t0
         print(f'speed: total staked shown after {first:.1f}s, full history after {done:.1f}s', 'OK' if first < done - 3 else 'FAIL')
-        await pg.unroute('**/*'); await pg.route('**/*', lambda r: r.abort() if not r.request.url.startswith('file:') else r.continue_())
-        t0 = _t.time(); await pg.goto(URL + '#view=explorer'); await pg.wait_for_timeout(600)
-        rows = await pg.locator('#rows .row').count()
-        print(f'cache: offline return visit shows {rows} rows within 0.6s', 'OK' if rows else 'FAIL')
         await b.close()
 asyncio.run(speed())
 
 
 async def history():
-    """Pages back until ~90 days are covered; a return visit only fetches what's new."""
+    """Pages back until ~90 days are covered."""
     async with async_playwright() as p:
         b = await p.chromium.launch(); ctx = await b.new_context(); pg = await ctx.new_page()
         await pg.route('**/*', lambda r: mock.handle(r) if not r.request.url.startswith('file:') else r.continue_())
@@ -99,10 +96,5 @@ async def history():
         pages = max(pg_ for n, k, pg_ in mock.search_calls if n == 'cosmoshub' and k == 'delegate.validator')
         print(f'history: oldest Cosmos event {oldest:.0f} days ago, {days_with_flow} of 90 days have flows, {pages} pages fetched',
               'OK' if oldest >= 89 and days_with_flow >= 85 else 'FAIL')
-        mock.search_calls.clear()
-        await pg.reload(); await pg.wait_for_function("!document.body.classList.contains('loading')", timeout=60000)
-        again = [c for c in mock.search_calls if c[0] == 'cosmoshub' and c[1] == 'delegate.validator']
-        days2 = await pg.evaluate("cybernetics.data.daily.filter(d => d.flows.cosmos).length")
-        print(f'return visit: {len(again)} Cosmos delegation page(s) fetched, history still {days2} days', 'OK' if len(again) <= 2 and days2 >= 85 else 'FAIL')
         await b.close()
 asyncio.run(history())

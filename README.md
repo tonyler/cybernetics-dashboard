@@ -3,15 +3,39 @@
 Live dashboard for The Cybernetics validator across Cosmos networks: total stake, daily staker and
 operator rewards, delegation inflows/outflows, on-chain activity, and in-page staking.
 
-Static site. No build step, no backend, no API keys, no dependencies.
+Static site. No build step, no server, no API keys, no dependencies.
 
-## Run
+## How it works
+
+```
+GitHub Action, every 15 min          visitors
+scripts/snapshot.mjs ──► data/snapshot.json ──► index.html   (one static file, same for everyone)
+  └─ data.js ──► public Cosmos APIs
+```
+
+The snapshot job fetches everything once and publishes it with the site, so visitors never call the chain
+APIs. 100 visitors = 100 downloads of one cached file, zero load on public nodes. Each run starts from the
+previous snapshot, fetches only newer transactions, and records that day's stake and price, so history keeps
+growing (at real daily prices) even after public nodes prune old transactions.
+
+Only two things talk to the chains from the browser: the Uptime tab's live block grid (tiny requests, only
+while it's open) and the visitor's own wallet when they stake.
+
+## Publish
+
+1. **Settings → Pages → Source: GitHub Actions.**
+2. Push to `main` (or Actions → *Snapshot and deploy* → Run workflow). The site redeploys every 15 minutes.
+
+GitHub pauses scheduled workflows in repositories with no activity for 60 days; re-enable it under Actions if so.
+
+## Run locally
 
 ```sh
+node scripts/snapshot.mjs        # writes data/snapshot.json (optional)
 python3 -m http.server 8000      # then open http://localhost:8000
 ```
 
-Opening `index.html` directly also works. To publish, enable **GitHub Pages** (Settings → Pages → Deploy from branch → `main` / root).
+Without a snapshot the page reads the chains itself (slower, same result).
 
 ## Files
 
@@ -21,6 +45,8 @@ Opening `index.html` directly also works. To publish, enable **GitHub Pages** (S
 | `data.js` | Fetches live data from public Cosmos APIs and shapes it into `{ chains, events, daily }`. |
 | `wallet.js` | Stake: connect Keplr / Leap, show balance, build + sign + broadcast a delegation. Ledger and Ethermint keys (Dymension) supported. On phones without an extension it reopens the page in the Keplr app. |
 | `index.html` | The UI: markup, styles, rendering, state. |
+| `scripts/snapshot.mjs` | The snapshot job (runs `data.js` in Node). |
+| `.github/workflows/snapshot.yml` | Runs the job every 15 min and deploys the site with the fresh snapshot. |
 | `assets/` | Brand mark, wordmark, network icons. |
 | `tests/` | Encoding test (vs CosmJS) and an offline end-to-end test with mocked chain APIs. |
 
@@ -42,21 +68,15 @@ where the validator can't be found is hidden automatically.
 | Votes | `proposal_vote` events from the validator's own account |
 | Uptime grid | Last 50 block commits (RPC `/commit`): signed if the validator's precommit is present |
 | Uptime % | Slashing `missed_blocks_counter` over `signed_blocks_window` |
-| Live updates | Uptime every 6 s while the tab is open, new transactions every 60 s |
-
-### Loading
-
-Each network appears as soon as its stake/APR/price arrive (two small requests). Transactions stream in
-afterwards: the newest page first, then older pages until `history.days` (90) back. The result is kept in
-`localStorage` (`cyb.cache.v1`) with how far back each network is complete, so a return visit paints instantly
-and only fetches transactions newer than what it already has.
+| Freshness | Snapshot every 15 min (the page re-checks every 5 min); Uptime grid live every 6 s while open |
 
 ### Known limits
 
 - **History depth**: 90 days by default (`history.days`), capped at `history.maxPages × 100` transactions per
   event type, and limited by what public nodes keep indexed (some prune old transactions). For multi-year
   history, point `data.js` at an indexer.
-- **Past values** are rebuilt from today's stake minus later flows, valued at **today's** price. Slashing isn't modelled.
+- **Past values** use the stake and price recorded by the snapshot job each day. Days before the job started are
+  rebuilt from today's stake minus later flows, at today's price.
 - Public endpoints come and go. If a network fails to load it's left out and logged in the console as `[cybernetics]`.
 
 ## Tests
@@ -64,7 +84,8 @@ and only fetches transactions newer than what it already has.
 ```sh
 npm install && npm test          # transaction encoding matches CosmJS byte-for-byte
 pip install playwright && playwright install chromium
-python3 tests/e2e.py             # whole page against mocked chain APIs (3 SDK response formats, wallet flow, offline)
+python3 tests/snapshot_test.py   # snapshot job → site: incremental runs, visitors make zero chain API calls
+python3 tests/e2e.py             # fallback mode against mocked chain APIs (3 SDK formats, wallet flow, uptime)
 ```
 
 ## For agents

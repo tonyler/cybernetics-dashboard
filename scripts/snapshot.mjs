@@ -1,0 +1,81 @@
+/*
+  Snapshot job: fetch everything once, write data/snapshot.json. Every visitor reads that file.
+  Runs in GitHub Actions every 15 minutes (.github/workflows/snapshot.yml); also runs locally:
+
+    node scripts/snapshot.mjs
+
+  Incremental: starts from the previous snapshot (the deployed one, or the local file) and only fetches
+  transactions newer than it already has. Each run also records today's stake and price per network,
+  so the history keeps real values even after public nodes prune old transactions.
+
+  Env: SITE_URL   deployed site, to read the previous snapshot from (set by the workflow)
+       OUT        output path (default data/snapshot.json)
+       API_BASE   test-only: route all API calls to a local mock
+*/
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const OUT = path.resolve(ROOT, process.env.OUT || 'data/snapshot.json');
+const HISTORY_DAYS = 400;
+
+// Run the browser files as-is: config.js and data.js expect `window`.
+globalThis.window = globalThis;
+const run = file => vm.runInThisContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), { filename: file });
+run('config.js');
+const CFG = window.CYBERNETICS;
+if (process.env.API_BASE) {
+  const b = process.env.API_BASE.replace(/\/$/, '');
+  CFG.api = { chains: `${b}/chains/`, validators: `${b}/validators/chains/`, rest: `${b}/rest/`, rpc: `${b}/rpc/` };
+}
+run('data.js');
+const D = window.CyberneticsData;
+
+async function previous() {
+  if (process.env.SITE_URL) {
+    try {
+      const r = await fetch(new URL('data/snapshot.json', process.env.SITE_URL), { cache: 'no-store' });
+      if (r.ok) return await r.json();
+    } catch {}
+  }
+  try { return JSON.parse(fs.readFileSync(OUT, 'utf8')); } catch { return null; }
+}
+
+const prev = await previous();
+const days = CFG.history?.days ?? 90;
+const chains = { ...(prev?.chains || {}) };          // keep last known values for a network that fails this run
+const events = new Map((prev?.events || []).map(e => [e.key, e]));
+const coverage = { ...(prev?.coverage || {}) }, completeNow = new Set(), fresh = new Set();
+console.log(prev ? `previous snapshot: ${prev.generatedAt}, ${prev.events.length} events` : 'no previous snapshot: full fetch');
+
+await D.load({
+  since: coverage,
+  onChain: c => { chains[c.id] = c; fresh.add(c.id); console.log(`  ${c.id}: ${c.tokens.toLocaleString('en-US')} ${c.token}`); },
+  onEvents: (c, list, complete) => { for (const e of list) events.set(e.key, e); if (complete) completeNow.add(c.id); },
+  onFail: () => {}
+});
+if (!fresh.size) { console.error('No network could be reached; keeping the previous snapshot.'); process.exit(1); }
+
+// Official uptime over each chain's slashing window.
+const uptime = { ...(prev?.uptime || {}) };
+await Promise.all([...fresh].map(async id => {
+  try { uptime[id] = await D.signingStats(chains[id]); } catch (err) { console.warn(`  ${id}: uptime failed (${err.message})`); }
+}));
+
+// Today's real stake and price, per network.
+const today = new Date().toISOString().slice(0, 10), history = { ...(prev?.history || {}) };
+history[today] = { ...(history[today] || {}) };
+for (const id of fresh) history[today][id] = { tokens: chains[id].tokens, price: chains[id].price };
+for (const d of Object.keys(history)) if (Date.now() - Date.parse(d) > HISTORY_DAYS * 864e5) delete history[d];
+
+const keepFrom = Date.now() - (days + 7) * 864e5;
+const list = [...events.values()].filter(e => Date.parse(e.date) >= keepFrom).sort((a, b) => b.date.localeCompare(a.date));
+for (const id of completeNow) coverage[id] = { complete: true, newest: list.find(e => e.chain === id && e.type !== 'unbonded')?.date };
+
+const skip = new Set(['names', 'hexAddress', 'valcons', 'legacySearch', 'peer']);
+const snapshot = { generatedAt: new Date().toISOString(), chains, events: list, coverage, uptime, history };
+fs.mkdirSync(path.dirname(OUT), { recursive: true });
+fs.writeFileSync(OUT, JSON.stringify(snapshot, (k, v) => skip.has(k) ? undefined : v));
+console.log(`wrote ${path.relative(ROOT, OUT)}: ${Object.keys(chains).length} networks, ${list.length} events, ${(fs.statSync(OUT).size / 1024).toFixed(0)} KB`);

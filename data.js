@@ -13,20 +13,25 @@
             type: delegation | undelegation | redelegation (dir: in|out) | unbonded | vote
     daily   [{ date, flows, staked, stakerRewards, operatorRewards }]   oldest first; each is { [chainId]: USD }
 
+  Used in two places:
+    - scripts/snapshot.mjs (GitHub Action, every 15 min) → data/snapshot.json, which every visitor reads.
+    - the browser, only as a fallback when there is no snapshot (local development).
+
   Notes
-    - Daily history is rebuilt from current stake minus later net flows, valued at today's price.
+    - Daily history uses the snapshot's recorded stake + price per day; before that, it is rebuilt from
+      current stake minus later net flows, valued at today's price.
     - Rewards per day = stake × chain APR / 365, split by commission (operator) and the rest (stakers).
     - History goes back config.history.days (default 90), limited by what public nodes keep indexed.
 */
 (() => {
   'use strict';
   const CFG = window.CYBERNETICS;
-  const API = {
+  const API = Object.assign({
     chains: 'https://chains.cosmos.directory/',
     validators: 'https://validators.cosmos.directory/chains/',
     rest: 'https://rest.cosmos.directory/',
     rpc: 'https://rpc.cosmos.directory/'
-  };
+  }, CFG.api);                                          // overridable (tests, self-hosted proxies)
   const DAY = 864e5, LIMIT = 100;
   const FLOW_TYPES = ['delegation', 'undelegation', 'redelegation'];
 
@@ -243,7 +248,9 @@
     return { chain: c, monikers };
   }
 
-  function buildDaily(chains, events) {
+  // history[YYYY-MM-DD][chainId] = { tokens, price } recorded by the snapshot job: where present, that day uses
+  // the real recorded stake and price; otherwise it's rebuilt from today's stake minus later flows at today's price.
+  function buildDaily(chains, events, history = {}) {
     const days = CFG.history?.days ?? 90;
     const today = new Date(); today.setUTCHours(0, 0, 0, 0);
     const daily = Array.from({ length: days }, (_, i) => ({
@@ -260,11 +267,13 @@
       }
       let later = 0;                                   // net flow after day i
       for (let i = days - 1; i >= 0; i--) {
-        const staked = Math.max(0, c.tokens - later), perDay = staked * (c.chainApr || 0) / 365;
-        daily[i].flows[c.id] = net[i] * c.price;
-        daily[i].staked[c.id] = staked * c.price;
-        daily[i].operatorRewards[c.id] = perDay * c.commission * c.price;
-        daily[i].stakerRewards[c.id] = perDay * (1 - c.commission) * c.price;
+        const rec = history[daily[i].date.slice(0, 10)]?.[c.id];
+        const staked = rec ? rec.tokens : Math.max(0, c.tokens - later), price = rec?.price ?? c.price;
+        const perDay = staked * (c.chainApr || 0) / 365;
+        daily[i].flows[c.id] = net[i] * price;
+        daily[i].staked[c.id] = staked * price;
+        daily[i].operatorRewards[c.id] = perDay * c.commission * price;
+        daily[i].stakerRewards[c.id] = perDay * (1 - c.commission) * price;
         later += net[i];
       }
     }
@@ -282,7 +291,7 @@
     await Promise.all(CFG.chains.map(async cfg => {
       let info;
       try { info = await chainInfo(cfg); onChain?.(info.chain); }
-      catch (err) { console.warn('[cybernetics]', cfg.id, err); onFail?.(cfg.id, err); return; }
+      catch (err) { console.warn('[cybernetics]', cfg.id, err.message); onFail?.(cfg.id, err); return; }
       const c = info.chain, prev = since[cfg.id];
       const stopBefore = prev?.complete && prev.newest ? Date.parse(prev.newest) : Date.now() - days * DAY;
       const done = {};
@@ -294,7 +303,7 @@
         await emit(await chainEvents(c, { start: 1, maxPages: 1, stopBefore, done }));
         for (let start = 2; start <= cap && Object.keys(done).length < 5; start += CHUNK)
           await emit(await chainEvents(c, { start, maxPages: CHUNK, stopBefore, done }));
-      } catch (err) { console.warn('[cybernetics]', cfg.id, 'history', err); }
+      } catch (err) { console.warn('[cybernetics]', cfg.id, 'history', err.message); }
     }));
   }
 

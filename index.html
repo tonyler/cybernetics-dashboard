@@ -10,7 +10,8 @@
 <!--
   The Cybernetics validator dashboard. Static, no build step, no backend.
   ─ config.js  validator identity + networks (the only file to edit)
-  ─ data.js    live data from public Cosmos APIs → { chains, events, daily }
+  ─ data.js    reads public Cosmos APIs → { chains, events, daily }; run by the snapshot job
+  ─ scripts/snapshot.mjs  every 15 min (GitHub Action) → data/snapshot.json, which this page reads
   ─ wallet.js  in-page delegation via Keplr / Leap
   ─ this file  UI. state { view, chain, metric, days, type, day } is mirrored in the URL hash.
                set(k, v) is the only way state changes; any [data-key][data-value] button calls it.
@@ -753,7 +754,7 @@
     try {
       const { hash } = await W.delegate(c, $('amount').value);
       status.innerHTML = `Delegated. <a href="${c.txBase + hash}" target="_blank" rel="noopener">View transaction</a>`;
-      setTimeout(() => { refreshChain(c); W.balance(c, wallet.address).then(b => { wallet.balance = b.amount; renderStake(false); }).catch(() => {}); }, 7000);
+      setTimeout(() => { W.balance(c, wallet.address).then(b => { wallet.balance = b.amount; renderStake(false); }).catch(() => {}); }, 7000);
     } catch (err) {
       status.className = 'stake-status err'; status.textContent = err.message;
     } finally {
@@ -814,7 +815,8 @@
     const u = up[c.id] ??= { blocks: new Map(), latest: 0, stats: null, busy: false };
     if (u.busy) return; u.busy = true;
     try {
-      if (!u.stats) window.CyberneticsData.signingStats(c).then(st => { u.stats = st; drawUptime(c); }).catch(() => {});
+      if (!u.stats && DATA.uptime?.[c.id]) u.stats = DATA.uptime[c.id];          // from the snapshot
+      if (!u.stats && !DATA.uptime) window.CyberneticsData.signingStats(c).then(st => { u.stats = st; drawUptime(c); }).catch(() => {});
       const top = await window.CyberneticsData.commit(c);
       const prev = u.latest, fresh = [];
       u.blocks.set(top.height, top.signed); u.latest = Math.max(u.latest, top.height);
@@ -898,44 +900,21 @@
     }
   };
 
-  /* ── Live data ───────────────────────────────────────────── */
+  /* ── Data ────────────────────────────────────────────────
+     Normal: read data/snapshot.json, written every 15 min by the snapshot job (scripts/snapshot.mjs). Every
+     visitor gets the same file and nobody calls the chain APIs. Fallback, when there is no snapshot (local
+     development, or before the first job has run): read the chains directly with the same data.js. */
+  const D = window.CyberneticsData, ORDER = window.CYBERNETICS.chains.map(c => c.id);
   const known = new Set();
-  async function refreshChain(c) {
-    try {
-      const fresh = (await window.CyberneticsData.recent(c)).filter(e => !known.has(e.key)).sort((a, b) => a.date.localeCompare(b.date));
-      fresh.forEach(e => { known.add(e.key); cybernetics.push(e); });
-    } catch {}
-  }
-  // Last good data is kept in the browser, so a return visit paints instantly and then refreshes.
-  const D = window.CyberneticsData, CACHE = 'cyb.cache.v1', ORDER = window.CYBERNETICS.chains.map(c => c.id);
-  // coverage[chainId] = { complete, newest }: history for that network is complete back to the window start,
-  // so the next visit only needs transactions newer than `newest`.
-  let coverage = {};
-  const fetchedNow = new Set();
-  const saveCache = () => {
-    const keepFrom = Date.now() - ((window.CYBERNETICS.history?.days ?? 90) + 7) * 864e5;
-    const cov = {};
-    for (const id of Object.keys(DATA.chains)) {
-      if (fetchedNow.has(id)) cov[id] = { complete: true, newest: DATA.events.find(e => e.chain === id && e.type !== 'unbonded')?.date };
-      else if (coverage[id]) cov[id] = coverage[id];
-    }
-    let events = DATA.events.filter(e => Date.parse(e.date) >= keepFrom).slice(0, 15000);
-    const skip = ['names', 'hexAddress', 'valcons', 'legacySearch', 'peer'];
-    for (let tries = 0; tries < 4; tries++) {
-      try { localStorage.setItem(CACHE, JSON.stringify({ at: Date.now(), coverage: cov, chains: DATA.chains, events }, (k, v) => skip.includes(k) ? undefined : v)); return; }
-      catch { events = events.slice(0, events.length >> 1); }      // storage full: keep the newest half
-    }
-  };
-  const readCache = () => { try { const c = JSON.parse(localStorage.getItem(CACHE)); return c && Date.now() - c.at < 7 * 864e5 ? c : null; } catch { return null; } };
-  let redraw = 0;
+  let history = {}, snapshotAt = '', redraw = 0;
   function dataChanged() {
     clearTimeout(redraw);
     redraw = setTimeout(() => {
       const hadData = DATA.daily.some(d => Object.keys(d.staked).length);
-      DATA.daily = D.buildDaily(DATA.chains, DATA.events);
+      DATA.daily = D.buildDaily(DATA.chains, DATA.events, history);
       document.body.classList.toggle('quiet', !!hadData);   // first paint animates; later updates don't
       flowKey = '';
-      buildMenu(); render(); saveCache();
+      buildMenu(); render();
     }, 120);
   }
   function addChain(c) {
@@ -947,31 +926,39 @@
     for (const e of list) if (!known.has(e.key)) { known.add(e.key); DATA.events.push(e); }
     DATA.events.sort((a, b) => b.date.localeCompare(a.date));
   }
+  async function readSnapshot() {
+    const res = await fetch('data/snapshot.json', { cache: 'no-cache' });
+    if (!res.ok) throw new Error(res.status);
+    return res.json();
+  }
+  function applySnapshot(snap) {
+    if (snap.generatedAt === snapshotAt) return;
+    snapshotAt = snap.generatedAt;
+    history = snap.history || {};
+    DATA.uptime = snap.uptime || {};
+    Object.values(snap.chains).forEach(addChain);
+    addEvents(snap.events);
+    dataChanged();
+  }
   async function boot() {
-    const cached = readCache();
-    if (cached) {
-      coverage = cached.coverage || {};
-      Object.values(cached.chains).forEach(addChain);
-      addEvents(cached.events);
-      DATA.daily = D.buildDaily(DATA.chains, DATA.events);
-      buildMenu();
-    }
-    DATA.syncing = true;
     document.body.classList.add('loading');
-    render();
-    await D.load({
-      since: coverage,
-      onChain: c => { addChain(c); dataChanged(); },
-      onEvents: (c, list, complete) => { addEvents(list); if (complete) fetchedNow.add(c.id); dataChanged(); },
-      onFail: id => { DATA.failed.push(id); }
-    });
+    DATA.syncing = true; render();
+    try { applySnapshot(await readSnapshot()); }
+    catch {
+      console.warn('[cybernetics] no data/snapshot.json: reading the chains directly');
+      await D.load({
+        onChain: c => { addChain(c); dataChanged(); },
+        onEvents: (c, list) => { addEvents(list); dataChanged(); },
+        onFail: id => { DATA.failed.push(id); }
+      });
+    }
     DATA.syncing = false; DATA.loading = false;
     document.body.classList.remove('loading');
     if (!Object.keys(DATA.chains).length) { render(); setTimeout(boot, 30000); return; }
     if (state.chain !== 'all' && !DATA.chains[state.chain]) state.chain = 'all';
     dataChanged();
     setInterval(() => { if (state.view === 'uptime' && !document.hidden) tickUptime(); }, 6000);
-    setInterval(() => { if (!document.hidden) Object.values(DATA.chains).forEach(refreshChain); }, 60000);
+    setInterval(() => { if (!document.hidden) readSnapshot().then(applySnapshot).catch(() => {}); }, 5 * 60e3);
   }
   /* ───────────────────────────────────────────────────────── */
 

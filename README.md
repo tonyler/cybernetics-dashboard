@@ -64,7 +64,7 @@ where the validator can't be found is hidden automatically.
 |---|---|
 | Total staked | Validator `tokens` (chain REST) × USD price |
 | Prices | CoinGecko: current price each run, 90 days of daily prices once a day (token id from the chain registry) |
-| APR | **Externally sourced** from cosmos.directory `calculated_apr`, falling back to `estimated_apr`. Displayed delegator APR adjusts the provider's network rate for this validator's commission; unavailable provider rates remain unavailable. No local reward sampling. |
+| APR | **External APIs only**: Osmosis uses Numia's total staking APR (including fee-derived rewards), Nolus uses the official Nolus governance APR API, and other networks use cosmos.directory `calculated_apr` (or `estimated_apr`). Delegator APR is displayed net of validator commission. Numia/Nolus do not fall back to inflation-derived APR; their last verified external APR is kept for at most 72 hours if the provider is unavailable, then shown as unavailable. No local reward sampling. |
 | Staker / operator rewards per day | stake × APR ÷ 365 for stakers; the operator's commission is the rest of the gross; each day at that day's price |
 | Delegations, undelegations, redelegations | On-chain transaction search (`delegate`, `unbond`, `redelegate` events); counterparty names from the chain's full validator set |
 | Unbonding complete | `completion_time` of each undelegation (falls back to the chain's unbonding period) |
@@ -82,10 +82,18 @@ where the validator can't be found is hidden automatically.
   rebuilt from today's stake minus later flows, at today's price.
 - Public endpoints come and go. If a network fails to load it's left out and logged in the console as `[cybernetics]`.
 
+## APR API sources
+
+- Osmosis: `https://public-osmosis-api.numia.xyz/apr` (daily total staking APR, including protocol revenue; may appear a day late). Optional GitHub Actions secret: `NUMIA_API_KEY` for higher limits.
+- Nolus: `https://app.nolus.io/api/governance/apr` (official APR read endpoint; no key).
+- Other networks: Cosmos Directory. All displayed delegator APRs account for validator commission.
+- If an APR endpoint is unavailable, the snapshot keeps a same-source verified APR for up to 72 hours; it does not replace these rates with zero-inflation estimates. The snapshot records `aprSource`, `aprFetchedAt`, and `aprAsOf` for diagnostics.
+
 ## Tests
 
 ```sh
-npm install && npm test          # transaction encoding matches CosmJS byte-for-byte
+npm install && npm test
+node --test tests/provider-apr.test.mjs          # transaction encoding matches CosmJS byte-for-byte
 pip install playwright && playwright install chromium
 python3 tests/snapshot_test.py   # snapshot job → site: incremental runs, visitors make zero chain API calls
 python3 tests/e2e.py             # fallback mode against mocked chain APIs (3 SDK formats, wallet flow, uptime)

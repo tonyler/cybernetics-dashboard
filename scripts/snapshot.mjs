@@ -11,12 +11,14 @@
   Env: SITE_URL   deployed site, to read the previous snapshot from (set by the workflow)
        OUT        output path (default data/snapshot.json)
        COINGECKO_API_KEY  optional CoinGecko demo key (repository secret), for higher rate limits
+       NUMIA_API_KEY     optional Numia key for higher rate limits
        API_BASE   test-only: route all API calls to a local mock
 */
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { externalApr, chooseApr } from './provider-apr.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.resolve(ROOT, process.env.OUT || 'data/snapshot.json');
@@ -102,12 +104,25 @@ for (const id of fresh) {
   } catch (err) { console.warn(`  ${id}: price history ${err.message}, retrying next run`); break; }
 }
 
-/* ── Provider APR ──
-   APR is supplied by cosmos.directory in chainInfo (calculated_apr, then estimated_apr).
-   No delegator reward probes, custom annualization, or last measured APR carry-forward. */
+/* ── Staking APR sources ──
+   Osmosis: Numia total staking APR (revenue + inflation, as published).
+   Nolus: official app staking APR. Others: cosmos.directory provider APR.
+   Do not use inflation-based fallbacks for Osmosis or Nolus. */
+await Promise.all(['osmosis', 'nolus'].filter(id => chains[id]).map(async id => {
+  let reading = null;
+  try {
+    if (fresh.has(id)) {
+      reading = await externalApr(id, {
+        base: process.env.API_BASE?.replace(/\\/$/, '') || '',
+        numiaKey: process.env.NUMIA_API_KEY || ''
+      });
+    }
+  } catch (err) { console.warn(`  ${id}: external APR unavailable (${err.message})`); }
+  chains[id] = chooseApr(id, chains[id], prev?.chains?.[id], reading);
+}));
 for (const id of fresh) {
   const c = chains[id];
-  console.log(`  ${id}: APR ${c.apr == null ? '— (provider unavailable)' : c.apr.toFixed(2) + '%'} (cosmos.directory), $${c.price}`);
+  console.log(`  ${id}: APR ${c.apr == null ? '— (provider unavailable)' : c.apr.toFixed(2) + '%'} (${c.aprSource || 'cosmos.directory'}), ${c.price}`);
 }
 
 // Today's stake, per network (prices per day come from CoinGecko above).

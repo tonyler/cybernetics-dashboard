@@ -96,43 +96,13 @@ for (const id of fresh) {
   } catch (err) { console.warn(`  ${id}: price history ${err.message}, retrying next run`); break; }
 }
 
-/* ── Measured APR ──
-   Follow one real delegation per network: the growth of its pending rewards between runs, divided by its stake
-   and the time elapsed, is what delegators actually earn (after commission, fees included). Pairs where the
-   stake changed or rewards were withdrawn are skipped; the rate is averaged over the last 24 hours. */
-const aprState = { ...(prev?.aprState || {}) };
-await Promise.all([...fresh].map(async id => {
-  const c = chains[id], st = aprState[id] ??= { probe: null, samples: [] };
-  try {
-    if (!st.probe) {
-      const r = await D.rest(c, `/cosmos/staking/v1beta1/validators/${c.valoper}/delegations?pagination.limit=20`);
-      const best = (r.delegation_responses || []).sort((a, b) => Number(b.balance.amount) - Number(a.balance.amount))[0];
-      if (!best) throw new Error('no delegations');
-      st.probe = best.delegation.delegator_address; st.samples = [];
-    }
-    const [del, rew] = await Promise.all([
-      D.rest(c, `/cosmos/staking/v1beta1/validators/${c.valoper}/delegations/${st.probe}`),
-      D.rest(c, `/cosmos/distribution/v1beta1/delegators/${st.probe}/rewards/${c.valoper}`)
-    ]);
-    const stake = Number(del.delegation_response.balance.amount);
-    const reward = Number((rew.rewards || []).find(x => x.denom === c.denom)?.amount || 0);
-    if (!stake) { st.probe = null; throw new Error('probe delegation gone'); }
-    st.samples = [...st.samples, { t: Date.now(), stake, reward }].filter(x => Date.now() - x.t < 26 * 3600e3);
-    let earned = 0, stakeTime = 0;
-    for (let i = 1; i < st.samples.length; i++) {
-      const a = st.samples[i - 1], b = st.samples[i];
-      if (b.stake !== a.stake || b.reward < a.reward) continue;
-      earned += b.reward - a.reward; stakeTime += a.stake * (b.t - a.t);
-    }
-    if (stakeTime > 0) {
-      c.aprEstimated = c.apr;
-      c.apr = earned / stakeTime * 365 * 864e5 * 100;
-      c.aprMeasured = true;
-    }
-  } catch (err) { console.warn(`  ${id}: measured APR ${err.message}`); }
-  if (!c.aprMeasured && prev?.chains?.[id]?.aprMeasured) { c.apr = prev.chains[id].apr; c.aprMeasured = true; }   // keep last good value
-  console.log(`  ${id}: APR ${c.apr == null ? '—' : c.apr.toFixed(2) + '%'}${c.aprMeasured ? ' (measured)' : ' (estimated)'}, $${c.price}`);
-}));
+/* ── Provider APR ──
+   APR is supplied by cosmos.directory in chainInfo (calculated_apr, then estimated_apr).
+   No delegator reward probes, custom annualization, or last measured APR carry-forward. */
+for (const id of fresh) {
+  const c = chains[id];
+  console.log(`  ${id}: APR ${c.apr == null ? '— (provider unavailable)' : c.apr.toFixed(2) + '%'} (cosmos.directory), $${c.price}`);
+}
 
 // Today's stake, per network (prices per day come from CoinGecko above).
 history[today] = { ...(history[today] || {}) };
@@ -144,7 +114,7 @@ const list = [...events.values()].filter(e => Date.parse(e.date) >= keepFrom).so
 for (const id of completeNow) coverage[id] = { complete: true, newest: list.find(e => e.chain === id && e.type !== 'unbonded')?.date };
 
 const skip = new Set(['names', 'hexAddress', 'valcons', 'legacySearch', 'peer']);
-const snapshot = { generatedAt: new Date().toISOString(), chains, events: list, coverage, uptime, history, aprState, priceHistoryDay };
+const snapshot = { generatedAt: new Date().toISOString(), chains, events: list, coverage, uptime, history, priceHistoryDay };
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, JSON.stringify(snapshot, (k, v) => skip.has(k) ? undefined : v));
 console.log(`wrote ${path.relative(ROOT, OUT)}: ${Object.keys(chains).length} networks, ${list.length} events, ${(fs.statSync(OUT).size / 1024).toFixed(0)} KB`);

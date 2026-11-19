@@ -37,7 +37,8 @@
   [hidden] { display: none !important; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   :focus-visible { outline: 1px solid var(--sig); outline-offset: 3px; }
-  .wrap { width: min(1080px, calc(100% - 40px)); margin-inline: auto; }
+  /* Full width on desktop: content spans the window with comfortable side margins. */
+  .wrap { width: calc(100% - 2 * clamp(20px, 4vw, 64px)); margin-inline: auto; }
   .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
   /* Bar */

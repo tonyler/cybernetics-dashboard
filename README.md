@@ -44,6 +44,12 @@ where the validator can't be found is hidden automatically.
 | Uptime % | Slashing `missed_blocks_counter` over `signed_blocks_window` |
 | Live updates | Uptime every 6 s while the tab is open, new transactions every 60 s |
 
+### Loading
+
+Each network appears as soon as its stake/APR/price arrive (two small requests). Transactions stream in
+afterwards, newest page first, then the rest of the history. The last result is kept in `localStorage`
+(`cyb.cache.v1`, up to 7 days old), so a return visit paints instantly and refreshes in the background.
+
 ### Known limits
 
 - **History depth** is whatever public nodes keep indexed: up to `history.pages × 100` transactions per event

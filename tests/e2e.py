@@ -62,3 +62,26 @@ async def main():
             await ctx.close()
         await b.close()
 asyncio.run(main())
+
+
+async def speed():
+    """Stake must appear before slow history finishes; a return visit must paint from the browser cache."""
+    import time as _t
+    async with async_playwright() as p:
+        b = await p.chromium.launch(); ctx = await b.new_context(viewport={'width': 1280, 'height': 900}); pg = await ctx.new_page()
+        async def slow(r):
+            if '/cosmos/tx/v1beta1/txs' in r.request.url: await asyncio.sleep(4)
+            await mock.handle(r)
+        await pg.route('**/*', lambda r: slow(r) if not r.request.url.startswith('file:') else r.continue_())
+        t0 = _t.time(); await pg.goto(URL)
+        await pg.wait_for_function("document.querySelector('#perfValue .sr')?.textContent?.startsWith('$')", timeout=20000)
+        first = _t.time() - t0
+        await pg.wait_for_function("!document.body.classList.contains('loading')", timeout=60000)
+        done = _t.time() - t0
+        print(f'speed: total staked shown after {first:.1f}s, full history after {done:.1f}s', 'OK' if first < done - 3 else 'FAIL')
+        await pg.unroute('**/*'); await pg.route('**/*', lambda r: r.abort() if not r.request.url.startswith('file:') else r.continue_())
+        t0 = _t.time(); await pg.goto(URL + '#view=explorer'); await pg.wait_for_timeout(600)
+        rows = await pg.locator('#rows .row').count()
+        print(f'cache: offline return visit shows {rows} rows within 0.6s', 'OK' if rows else 'FAIL')
+        await b.close()
+asyncio.run(speed())

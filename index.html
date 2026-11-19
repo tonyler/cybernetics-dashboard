@@ -51,6 +51,7 @@
   .stake:active, .go:active { transform: scale(.97); }
   .stake[aria-current="page"] { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--sig); }
 
+  .quiet .line, .quiet .area, .quiet .bars rect, .quiet .panel.in { animation: none !important; }
   body.loading .bar::after { content: ""; position: absolute; left: 0; bottom: -1px; height: 1px; width: 30%; background: var(--text); animation: load 1.1s var(--ease) infinite; }
   @keyframes load { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
   a.row { color: inherit; transition: background .15s; }
@@ -370,6 +371,7 @@
     value = key === 'days' ? Number(value) : value;
     if (state[key] === value) return;
     state[key] = value;
+    document.body.classList.remove('quiet');
     if (key !== 'metric') state.limit = PAGE;
     if (key === 'chain' || key === 'days') state.day = '';
     const changed = Object.keys(DEFAULTS).filter(k => state[k] !== DEFAULTS[k]).map(k => [k, state[k]]);
@@ -570,12 +572,12 @@
     const shown = list.slice(0, state.limit);
     if (!list.length) {
       const p = document.createElement('p'); p.className = 'empty';
-      p.textContent = DATA.loading ? 'Loading…' : Object.keys(DATA.chains).length ? 'No transactions' : 'Couldn’t reach the networks. Retrying…';
+      p.textContent = DATA.loading || DATA.syncing ? 'Loading…' : Object.keys(DATA.chains).length ? 'No transactions' : 'Couldn’t reach the networks. Retrying…';
       box.replaceChildren(p);
     }
     else box.replaceChildren(...shown.map(e => {
       const row = document.createElement(e.hash ? 'a' : 'div');
-      if (e.hash) { row.href = DATA.chains[e.chain].txUrl(e.hash); row.target = '_blank'; row.rel = 'noopener'; }
+      if (e.hash) { row.href = DATA.chains[e.chain].txBase + e.hash; row.target = '_blank'; row.rel = 'noopener'; }
       row.className = 'row' + (e === fresh ? ' new' : '');
       const when = new Date(e.date), chain = DATA.chains[e.chain].name;
       row.innerHTML = `<div class="what"><svg class="ev-icon${isOut(e) ? ' out' : ''}" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICON[e.type]}"/></svg><div><b class="title"></b><span class="peer"></span><span class="sub"></span></div></div>
@@ -742,7 +744,7 @@
     go.setAttribute('aria-busy', 'true'); go.textContent = 'Confirm in your wallet…';
     try {
       const { hash } = await W.delegate(c, $('amount').value);
-      status.innerHTML = `Delegated. <a href="${c.txUrl(hash)}" target="_blank" rel="noopener">View transaction</a>`;
+      status.innerHTML = `Delegated. <a href="${c.txBase + hash}" target="_blank" rel="noopener">View transaction</a>`;
       setTimeout(() => { refreshChain(c); W.balance(c, wallet.address).then(b => { wallet.balance = b.amount; renderStake(false); }).catch(() => {}); }, 7000);
     } catch (err) {
       status.className = 'stake-status err'; status.textContent = err.message;
@@ -892,18 +894,54 @@
       fresh.forEach(e => { known.add(e.key); cybernetics.push(e); });
     } catch {}
   }
+  // Last good data is kept in the browser, so a return visit paints instantly and then refreshes.
+  const D = window.CyberneticsData, CACHE = 'cyb.cache.v1', ORDER = window.CYBERNETICS.chains.map(c => c.id);
+  const saveCache = () => { try {
+    localStorage.setItem(CACHE, JSON.stringify({ at: Date.now(), chains: DATA.chains, events: DATA.events.slice(0, 3000) },
+      (k, v) => ['names', 'hexAddress', 'valcons', 'legacySearch'].includes(k) ? undefined : v));
+  } catch {} };
+  const readCache = () => { try { const c = JSON.parse(localStorage.getItem(CACHE)); return c && Date.now() - c.at < 7 * 864e5 ? c : null; } catch { return null; } };
+  let redraw = 0;
+  function dataChanged() {
+    clearTimeout(redraw);
+    redraw = setTimeout(() => {
+      const hadData = DATA.daily.some(d => Object.keys(d.staked).length);
+      DATA.daily = D.buildDaily(DATA.chains, DATA.events);
+      document.body.classList.toggle('quiet', !!hadData);   // first paint animates; later updates don't
+      flowKey = '';
+      buildMenu(); render(); saveCache();
+    }, 120);
+  }
+  function addChain(c) {
+    const next = { ...DATA.chains, [c.id]: c };
+    DATA.chains = Object.fromEntries(ORDER.filter(id => next[id]).map(id => [id, next[id]]));
+    DATA.loading = false;
+  }
+  function addEvents(list) {
+    for (const e of list) if (!known.has(e.key)) { known.add(e.key); DATA.events.push(e); }
+    DATA.events.sort((a, b) => b.date.localeCompare(a.date));
+  }
   async function boot() {
+    const cached = readCache();
+    if (cached) {
+      Object.values(cached.chains).forEach(addChain);
+      addEvents(cached.events);
+      DATA.daily = D.buildDaily(DATA.chains, DATA.events);
+      buildMenu();
+    }
+    DATA.syncing = true;
     document.body.classList.add('loading');
-    DATA.loading = true; render();
-    const data = await window.CyberneticsData.load();
-    Object.assign(DATA, data, { loading: false });
-    DATA.events.forEach(e => known.add(e.key));
+    render();
+    await D.load({
+      onChain: c => { addChain(c); dataChanged(); },
+      onEvents: (c, list) => { addEvents(list); dataChanged(); },
+      onFail: id => { DATA.failed.push(id); }
+    });
+    DATA.syncing = false; DATA.loading = false;
     document.body.classList.remove('loading');
     if (!Object.keys(DATA.chains).length) { render(); setTimeout(boot, 30000); return; }
     if (state.chain !== 'all' && !DATA.chains[state.chain]) state.chain = 'all';
-    buildMenu();
-    flowKey = ''; shownView = null;
-    render();
+    dataChanged();
     setInterval(() => { if (state.view === 'uptime' && !document.hidden) tickUptime(); }, 6000);
     setInterval(() => { if (!document.hidden) Object.values(DATA.chains).forEach(refreshChain); }, 60000);
   }

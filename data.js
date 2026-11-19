@@ -74,10 +74,10 @@
   const gasString = (price, denom) => (+price).toFixed(12).replace(/\.?0+$/, '') + denom;
 
   /* ── Transaction search (SDK ≥0.50 uses `query`, older nodes `events`) ── */
-  async function search(chain, query, pages) {
+  async function search(chain, query, pages, start = 1) {
     const base = `${API.rest}${chain.registry}/cosmos/tx/v1beta1/txs?order_by=ORDER_BY_DESC&`;
     const q = encodeURIComponent(query), out = [];
-    for (let page = 1; page <= pages; page++) {
+    for (let page = start; page <= pages; page++) {
       let res;
       if (chain.legacySearch !== true) {
         try { res = await get(`${base}query=${q}&page=${page}&limit=${LIMIT}`); chain.legacySearch = false; }
@@ -113,13 +113,13 @@
     return 'Voted ' + name;
   }
 
-  async function chainEvents(c, pages) {
+  async function chainEvents(c, pages, start = 1) {
     const [del, unb, rin, rout, own] = await Promise.all([
-      search(c, `delegate.validator='${c.valoper}'`, pages),
-      search(c, `unbond.validator='${c.valoper}'`, pages),
-      search(c, `redelegate.destination_validator='${c.valoper}'`, Math.max(1, pages - 1)),
-      search(c, `redelegate.source_validator='${c.valoper}'`, Math.max(1, pages - 1)),
-      search(c, `message.sender='${c.account}'`, 1)
+      search(c, `delegate.validator='${c.valoper}'`, pages, start),
+      search(c, `unbond.validator='${c.valoper}'`, pages, start),
+      search(c, `redelegate.destination_validator='${c.valoper}'`, pages, start),
+      search(c, `redelegate.source_validator='${c.valoper}'`, pages, start),
+      search(c, `message.sender='${c.account}'`, 1, start)
     ].map(p => p.catch(() => [])));
     const out = new Map();
     const amountOf = a => baseUnits(a.amount) / 10 ** c.decimals;
@@ -192,7 +192,7 @@
     }).filter(Boolean);
   }
 
-  async function loadChain(cfg) {
+  async function chainInfo(cfg) {
     const meta = (await get(API.chains + cfg.registry)).chain;
     let valoper = cfg.valoper, monikers = null;
     if (!valoper) {
@@ -223,11 +223,9 @@
       wallet: cfg.wallet !== false,
       jailed: !!v.jailed,
       keplrUrl: `https://wallet.keplr.app/chains/${cfg.keplr || cfg.registry}?modal=validator&chain=${meta.chain_id}&validator_address=${valoper}`,
-      txUrl: hash => `https://www.mintscan.io/${cfg.mintscan || cfg.registry}/tx/${hash}`
+      txBase: `https://www.mintscan.io/${cfg.mintscan || cfg.registry}/tx/`
     };
-    const events = await chainEvents(c, CFG.history?.pages ?? 3);
-    await nameRedelegationPeers(c, events, monikers);
-    return { chain: c, events: [...events, ...completedUnbondings(c, events)] };
+    return { chain: c, monikers };
   }
 
   function buildDaily(chains, events) {
@@ -258,15 +256,25 @@
     return daily;
   }
 
-  async function load() {
-    const results = await Promise.allSettled(CFG.chains.map(loadChain));
-    const chains = {}, events = [], failed = [];
-    results.forEach((r, i) => {
-      if (r.status === 'fulfilled') { chains[r.value.chain.id] = r.value.chain; events.push(...r.value.events); }
-      else { failed.push(CFG.chains[i].id); console.warn('[cybernetics]', CFG.chains[i].id, r.reason); }
-    });
-    events.sort((a, b) => b.date.localeCompare(a.date));
-    return { chains, events, daily: buildDaily(chains, events), failed };
+  /* Streams results so the page fills in as soon as anything is known:
+       onChain(chain)          stake, APR, price… (fast: two small requests)
+       onEvents(chain, events) newest transactions first, then the rest of the history
+       onFail(chainId, error)  network left out */
+  async function load({ onChain, onEvents, onFail } = {}) {
+    const pages = CFG.history?.pages ?? 3;
+    await Promise.all(CFG.chains.map(async cfg => {
+      let info;
+      try { info = await chainInfo(cfg); onChain?.(info.chain); }
+      catch (err) { console.warn('[cybernetics]', cfg.id, err); onFail?.(cfg.id, err); return; }
+      const c = info.chain;
+      for (const [start, end] of pages > 1 ? [[1, 1], [2, pages]] : [[1, 1]]) {
+        try {
+          const events = await chainEvents(c, end, start);
+          await nameRedelegationPeers(c, events, info.monikers);
+          onEvents?.(c, [...events, ...completedUnbondings(c, events)]);
+        } catch (err) { console.warn('[cybernetics]', cfg.id, 'history', err); }
+      }
+    }));
   }
 
   // Newest events for one chain (first page only), for live updates.
@@ -308,5 +316,5 @@
     return { window, missed, uptime: window ? 1 - missed / window : null };
   }
 
-  window.CyberneticsData = { load, recent, commit, signingStats, FLOW_TYPES };
+  window.CyberneticsData = { load, recent, buildDaily, commit, signingStats, FLOW_TYPES };
 })();

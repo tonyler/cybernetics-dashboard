@@ -64,7 +64,7 @@ where the validator can't be found is hidden automatically.
 |---|---|
 | Total staked | Validator `tokens` (chain REST) × USD price |
 | Prices | CoinGecko: current price each run, 90 days of daily prices once a day (token id from the chain registry) |
-| APR | **External APIs only**: Osmosis uses Numia's total staking APR (including fee-derived rewards), Nolus uses the official Nolus governance APR API, and other networks use cosmos.directory `calculated_apr` (or `estimated_apr`). Delegator APR is displayed net of validator commission. Numia/Nolus do not fall back to inflation-derived APR; their last verified external APR is kept for at most 72 hours if the provider is unavailable, then shown as unavailable. No local reward sampling. |
+| APR | **External APIs only**: Osmosis uses Numia's published staking APR, Nolus uses the official Nolus governance APR API; both use rewards-based Staking Explorer as a fallback, and other networks use cosmos.directory `calculated_apr` (or `estimated_apr`). Delegator APR is displayed net of validator commission. Neither network falls back to inflation-derived APR. Zero or missing readings trigger the independent reward-distribution APR source; the last verified external APR is kept for at most 72 hours if both sources fail, then shown as unavailable. No local reward sampling. |
 | Staker / operator rewards per day | stake × APR ÷ 365 for stakers; the operator's commission is the rest of the gross; each day at that day's price |
 | Delegations, undelegations, redelegations | On-chain transaction search (`delegate`, `unbond`, `redelegate` events); counterparty names from the chain's full validator set |
 | Unbonding complete | `completion_time` of each undelegation (falls back to the chain's unbonding period) |
@@ -86,8 +86,9 @@ where the validator can't be found is hidden automatically.
 
 - Osmosis: `https://public-osmosis-api.numia.xyz/apr` (daily total staking APR, including protocol revenue; may appear a day late). Optional GitHub Actions secret: `NUMIA_API_KEY` for higher limits.
 - Nolus: `https://app.nolus.io/api/governance/apr` (official APR read endpoint; no key).
+- Secondary provider (Osmosis and Nolus): `https://staking-explorer.com/explorer/<network>` publishes distribution-based staking APR, used only if the primary source returns no usable positive rate.
 - Other networks: Cosmos Directory. All displayed delegator APRs account for validator commission.
-- If an APR endpoint is unavailable, the snapshot keeps a same-source verified APR for up to 72 hours; it does not replace these rates with zero-inflation estimates. The snapshot records `aprSource`, `aprFetchedAt`, and `aprAsOf` for diagnostics.
+- If an APR endpoint is unavailable, the snapshot keeps a verified rate from either approved provider for up to 72 hours; it never substitutes inflation-only estimates. The snapshot records `aprSource`, `aprFetchedAt`, `aprAsOf`, `aprCheckedAt`, and `aprError` for diagnostics.
 
 ## Tests
 

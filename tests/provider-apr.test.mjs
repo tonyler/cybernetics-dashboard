@@ -38,6 +38,14 @@ test('No fallback to cosmos.directory or unverified old APR', () => {
   assert.ok(Math.abs(chooseApr('nolus',current,verified,null,NOW).apr-7.6)<1e-10);
   assert.equal(chooseApr('nolus',current,{...verified,aprFetchedAt:'2026-11-10T00:00:00Z'},null,NOW).apr,null);
 });
+test('A failed chain snapshot preserves only a fresh, verified external APR', () => {
+  const original = {apr:4.94,chainApr:0.052,commission:0.05,aprSource:'numia',
+    aprFetchedAt:'2026-11-19T10:00:00Z',aprAsOf:'2026-11-18'};
+  const updated = chooseApr('osmosis',{...original,apr:null,chainApr:null},original,null,NOW);
+  assert.ok(Math.abs(updated.apr - 4.94) < 1e-10);
+  assert.equal(updated.aprSource,'numia');
+});
+
 test('Integration routes each chain to the appropriate provider', async () => {
   const urls=[];
   const fetchFn=async url=>{

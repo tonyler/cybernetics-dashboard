@@ -12,7 +12,7 @@
        OUT        output path (default data/snapshot.json)
        COINGECKO_API_KEY  optional CoinGecko demo key (repository secret), for higher rate limits
        NUMIA_API_KEY     optional Numia key for higher rate limits
-       APR_COLLECTOR_URL public read-only Keplr APR collector API URL
+       APR_COLLECTOR_URL public read-only APR/price/history collector API URL
        API_BASE   test-only: route all API calls to a local mock
 */
 import fs from 'node:fs';
@@ -21,6 +21,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { externalApr, chooseApr } from './provider-apr.mjs';
 import { fetchRemoteApr } from './remote-apr.mjs';
+import { fetchCollectorData } from './collector-data.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.resolve(ROOT, process.env.OUT || 'data/snapshot.json');
@@ -35,7 +36,7 @@ if (process.env.API_BASE) {
   const b = process.env.API_BASE.replace(/\/$/, '');
   CFG.api = { chains: `${b}/chains/`, validators: `${b}/validators/chains/`, rest: `${b}/rest/`, rpc: `${b}/rpc/` };
 }
-const COINGECKO = process.env.API_BASE ? process.env.API_BASE.replace(/\/$/, '') + '/coingecko/api/v3' : 'https://api.coingecko.com/api/v3';
+const COINGECKO = process.env.API_BASE ? process.env.API_BASE.replace(/\/$/, '') + '/coingecko/api/v3' : null;
 run('data.js');
 const D = window.CyberneticsData;
 
@@ -78,32 +79,56 @@ await Promise.all([...fresh].map(async id => {
   try { uptime[id] = await D.signingStats(chains[id]); } catch (err) { console.warn(`  ${id}: uptime failed (${err.message})`); }
 }));
 
-/* ── Prices (CoinGecko) ──
-   Current USD price for every network in one request; once a day, 90 days of daily prices per token,
-   so each day's stake and rewards are valued at that day's price. */
+/* ── Prices and history ──
+   Production: all CoinGecko requests run on the self-hosted collector only.
+   Read its cached price + APR history; retain previous snapshot history on errors.
+   Mock tests retain the original local CoinGecko routes. */
 const today = new Date().toISOString().slice(0, 10), history = { ...(prev?.history || {}) };
-const cgHeaders = process.env.COINGECKO_API_KEY ? { 'x-cg-demo-api-key': process.env.COINGECKO_API_KEY } : {};
-const cg = async p => { const r = await fetch(COINGECKO + p, { headers: cgHeaders }); if (!r.ok) throw new Error(`CoinGecko ${r.status}`); return r.json(); };
-const ids = [...new Set([...fresh].map(id => chains[id].coingeckoId).filter(Boolean))];
-try {
-  const now = await cg(`/simple/price?ids=${ids.join(',')}&vs_currencies=usd`);
-  for (const id of fresh) { const p = now[chains[id].coingeckoId]?.usd; if (p) chains[id].price = p; }
-} catch (err) { console.warn(`  prices: ${err.message} (keeping cosmos.directory prices)`); }
-// Daily price history: refreshed once a day per token, at most 2 tokens per run (the free API is strict);
-// a refused request (429) just waits for the next run.
 const priceHistoryDay = { ...(prev?.priceHistoryDay || {}) };
-let fetchedHistory = 0;
-for (const id of fresh) {
-  const coin = chains[id].coingeckoId;
-  if (!coin || priceHistoryDay[coin] === today || fetchedHistory >= 2) continue;
-  if (fetchedHistory) await new Promise(r => setTimeout(r, process.env.API_BASE ? 0 : 8000));
-  fetchedHistory++;
+const collectorUrl = process.env.APR_COLLECTOR_URL ||
+  (process.env.API_BASE ? '' : 'https://tonyler.is-not-a.dev/scraper/api');
+if (collectorUrl) {
   try {
-    const { prices } = await cg(`/coins/${coin}/market_chart?vs_currency=usd&days=${days}&interval=daily`);
-    for (const [ms, usd] of prices) { const d = new Date(ms).toISOString().slice(0, 10); (history[d] ??= {})[id] = { ...(history[d]?.[id] || {}), price: usd }; }
-    priceHistoryDay[coin] = today;
-    console.log(`  ${id}: ${prices.length} days of prices`);
-  } catch (err) { console.warn(`  ${id}: price history ${err.message}, retrying next run`); break; }
+    const external = await fetchCollectorData(collectorUrl);
+    for(const id of fresh) {
+      const price=external.prices[id];
+      if(price != null) chains[id].price=price;
+    }
+    for(const [date,records] of Object.entries(external.history)) {
+      const current = (history[date] ??= {});
+      for(const [id,rec] of Object.entries(records)) {
+        // Historical APR/price observed by the collector take precedence over
+        // estimated / previously recorded daily values; preserve stake.
+        current[id]={...(current[id] || {}),...rec};
+      }
+    }
+    console.log('  Collector prices:',Object.keys(external.prices).length,
+      'historical days:',Object.keys(external.history).length);
+  } catch(err) {
+    console.warn('  Collector price history unavailable:',err.message,
+      '(retaining previous snapshot prices and history)');
+  }
+} else {
+  // Offline mock harness only; never called for the production dashboard.
+  const cgHeaders = process.env.COINGECKO_API_KEY ? { 'x-cg-demo-api-key': process.env.COINGECKO_API_KEY } : {};
+  const cg = async p => {const r=await fetch(COINGECKO+p,{headers:cgHeaders});if(!r.ok)throw Error('CoinGecko '+r.status);return r.json();};
+  const ids=[...new Set([...fresh].map(id=>chains[id].coingeckoId).filter(Boolean))];
+  try {
+    const now=await cg('/simple/price?ids='+ids.join(',')+'&vs_currencies=usd');
+    for (const id of fresh) {const p=now[chains[id].coingeckoId]?.usd;if(p)chains[id].price=p;}
+  } catch(err){console.warn('  mock prices:',err.message);}
+  let fetchedHistory=0;
+  for(const id of fresh) {
+    const coin=chains[id].coingeckoId;
+    if(!coin || priceHistoryDay[coin]===today || fetchedHistory>=2)continue;
+    fetchedHistory++;
+    try {
+      const {prices}=await cg('/coins/'+coin+'/market_chart?vs_currency=usd&days='+days+'&interval=daily');
+      for(const [ms,usd] of prices) {const d=new Date(ms).toISOString().slice(0,10);
+        (history[d]??={})[id]={...(history[d]?.[id] || {}),price:usd};}
+      priceHistoryDay[coin]=today;
+    } catch(err) {console.warn('  mock price history:',err.message);break;}
+  }
 }
 
 /* ── Staking APR sources ──
@@ -136,8 +161,6 @@ for (const id of fresh) {
 /* Keplr APR scraper: prefer the displayed rate from our public Playwright service.
    It is a chain-level APR, not a validator-specific net APR. Adjust for commission.
    The old external providers remain as fallback until the service is online. */
-const collectorUrl = process.env.APR_COLLECTOR_URL ||
-  (process.env.API_BASE ? '' : 'https://tonyler.is-not-a.dev/scraper/api');
 if (collectorUrl) {
   try {
     const remote = await fetchRemoteApr(collectorUrl);

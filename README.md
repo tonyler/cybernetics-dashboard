@@ -63,7 +63,7 @@ where the validator can't be found is hidden automatically.
 | Shown | Source |
 |---|---|
 | Total staked | Validator `tokens` (chain REST) × USD price |
-| Prices | CoinGecko: current price each run, 90 days of daily prices once a day (token id from the chain registry) |
+| Prices | Self-hosted APR scraper at `tonyler.is-not-a.dev/scraper/api`, which batches CoinGecko token prices every 10 minutes and stores dated observations on the server. The dashboard's snapshot job uses its cached prices and `/scraper/history` daily prices, retaining prior snapshot history when unavailable. |
 | APR | **External APIs only**: Osmosis uses Numia's published staking APR, Nolus uses the official Nolus governance APR API; both use rewards-based Staking Explorer as a fallback, and other networks use cosmos.directory `calculated_apr` (or `estimated_apr`). Delegator APR is displayed net of validator commission. Neither network falls back to inflation-derived APR. Zero or missing readings trigger the independent reward-distribution APR source; the last verified external APR is kept for at most 72 hours if both sources fail, then shown as unavailable. No local reward sampling. |
 | Staker / operator rewards per day | **Estimated** from that date's recorded gross chain APR: daily gross tokens = validator stake × gross APR ÷ 365; stakers receive (1 − validator commission), operator commission is the remainder; each valued at that date's token price. Missing historical APRs display unavailable rather than invented zeros. |
 | Delegations, undelegations, redelegations | On-chain transaction search (`delegate`, `unbond`, `redelegate` events); counterparty names from the chain's full validator set |
@@ -91,6 +91,9 @@ where the validator can't be found is hidden automatically.
 - If an APR endpoint is unavailable, the snapshot keeps a verified rate from either approved provider for up to 72 hours; it never substitutes inflation-only estimates. The snapshot records `aprSource`, `aprFetchedAt`, `aprAsOf`, `aprCheckedAt`, and `aprError` for diagnostics.
 
 ## Keplr staking APR collector
+
+The collector is now also the **USD token-price and APR-history service**. Production GitHub Actions no longer calls CoinGecko directly: it reads `/scraper/api` for current prices and `/scraper/history?days=400` for recorded daily prices/APRs. The scraper polls prices every 10 minutes and stores up to 30 days of individual samples plus up to 400 days of daily records; older price backfill is attempted gradually subject to upstream availability. GitHub Pages visitors continue to read the already assembled static `data/snapshot.json`, not CoinGecko. Validator stake, transactions, and uptime still come from the existing Cosmos chain sources in the GitHub snapshot job. This doesn't change the page UI.
+
 
 The snapshot also checks `https://tonyler.is-not-a.dev/scraper/api` for the six native chains. Its values are scraped directly from the **Staking APR** shown on each Keplr Dashboard chain page (not APY or inflation). Values are used as displayed, without another commission deduction. Missing or stale readings fall back to the previously configured APR sources. To override the URL, set `APR_COLLECTOR_URL` in the snapshot GitHub Actions environment. The collector runs separately from GitHub Pages in [tonyler/Apr-scraper](https://github.com/tonyler/Apr-scraper); the Pages site itself remains static. It must first be deployed behind HTTPS on the user's server.
 

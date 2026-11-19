@@ -272,13 +272,18 @@
       for (let i = days - 1; i >= 0; i--) {
         const rec = history[daily[i].date.slice(0, 10)]?.[c.id];
         const staked = rec?.tokens ?? Math.max(0, c.tokens - later), price = rec?.price ?? c.price;
-        // c.apr is what delegators earn (after commission); the validator's commission is the rest of the gross.
-        const stakers = staked * (c.apr || 0) / 100 / 365;
-        const operator = c.commission < 1 ? stakers * c.commission / (1 - c.commission) : 0;
+        // Historical reward estimates use ONLY the APR recorded on that day.
+        // Older days without an APR observation are unknown (null), not zero.
+        // Current day may use the latest live provider APR before it is recorded.
+        const grossApr = rec?.chainApr ?? (i === days - 1 ? c.chainApr : null);
+        const hasApr = grossApr != null && Number.isFinite(grossApr) && grossApr >= 0;
+        const grossDaily = hasApr ? staked * grossApr / 365 : null;
+        const stakers = grossDaily == null ? null : grossDaily * (1 - c.commission);
+        const operator = grossDaily == null ? null : grossDaily * c.commission;
         daily[i].flows[c.id] = net[i] * price;
         daily[i].staked[c.id] = staked * price;
-        daily[i].stakerRewards[c.id] = stakers * price;
-        daily[i].operatorRewards[c.id] = operator * price;
+        daily[i].stakerRewards[c.id] = stakers == null ? null : stakers * price;
+        daily[i].operatorRewards[c.id] = operator == null ? null : operator * price;
         later += net[i];
       }
     }

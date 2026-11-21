@@ -259,7 +259,9 @@
     const today = new Date(); today.setUTCHours(0, 0, 0, 0);
     const daily = Array.from({ length: days }, (_, i) => ({
       date: new Date(+today - (days - 1 - i) * DAY).toISOString(),
-      flows: {}, staked: {}, tokens: {}, stakerRewards: {}, operatorRewards: {}
+      flows: {}, staked: {}, stakerRewards: {}, operatorRewards: {},
+      // the same series in each network's own token (no price): tokens = staked
+      tokens: {}, flowsTokens: {}, stakerRewardsTokens: {}, operatorRewardsTokens: {}
     }));
     for (const c of Object.values(chains)) {
       const net = new Array(days).fill(0);            // tokens per day
@@ -290,6 +292,9 @@
         const stakers = grossDaily == null ? null : grossDaily * (1 - c.commission);
         const operator = grossDaily == null ? null : grossDaily * c.commission;
         daily[i].flows[c.id] = net[i] * price;
+        daily[i].flowsTokens[c.id] = net[i];
+        daily[i].stakerRewardsTokens[c.id] = stakers;
+        daily[i].operatorRewardsTokens[c.id] = operator;
         daily[i].staked[c.id] = staked * price;
         daily[i].tokens[c.id] = staked;                 // stake in the network's own token
         daily[i].stakerRewards[c.id] = stakers == null ? null : stakers * price;

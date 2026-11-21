@@ -140,6 +140,14 @@
   @keyframes sweep { to { transform: translateX(640%); } }
   .dot { position: absolute; width: 7px; height: 7px; margin: -3.5px; border-radius: 50%; background: var(--sig); box-shadow: 0 0 0 4px #11111114; pointer-events: none; }
   .dot.cursor { background: #fff; border: 1.5px solid var(--sig); box-shadow: none; }
+  .line.tokens { stroke-dasharray: 5 4; }
+  .dot.tok { background: var(--bg); border: 1.5px solid var(--sig); box-shadow: none; }
+  .legend { display: flex; gap: 6px; margin-top: 22px; }
+  .legend button { display: inline-flex; align-items: center; gap: 8px; padding: 5px 11px; border: 1px solid var(--line-2); border-radius: 999px; font-size: 12px; color: var(--faint); transition: color .2s, border-color .2s, background .2s; }
+  .legend button svg { width: 20px; height: 6px; stroke: currentColor; stroke-width: 1.6; }
+  .legend button:hover { color: var(--text); }
+  .legend [aria-pressed="true"] { color: var(--text); border-color: var(--text); background: var(--raise); }
+  .legend + .plot { margin-top: 14px; }
   .rule { position: absolute; top: 0; bottom: 0; width: 1px; background: repeating-linear-gradient(var(--dim) 0 3px, transparent 3px 7px); pointer-events: none; }
   .tip { position: absolute; transform: translate(-50%, calc(-100% - 14px)); padding: 7px 10px; background: #fff; border: 1px solid var(--line-2); border-radius: 6px; font: 12px var(--mono); white-space: nowrap; pointer-events: none; }
   .tip small { display: block; color: var(--faint); font-size: 11px; margin-bottom: 2px; }
@@ -326,12 +334,18 @@
         </div>
         <div class="seg mono" role="group" aria-label="Period" data-periods></div>
       </div>
+      <div class="legend" id="perfLegend" role="group" aria-label="Lines" hidden>
+        <button type="button" data-line="value"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3"/></svg>Value</button>
+        <button type="button" data-line="tokens"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3" stroke-dasharray="4 3"/></svg><span id="legendToken"></span></button>
+      </div>
       <div class="plot" id="perfPlot" tabindex="0" role="img">
         <svg id="perfSvg" viewBox="0 0 900 300" preserveAspectRatio="none" aria-hidden="true"></svg>
         <div class="scan"></div>
         <div class="dot end" id="perfEnd"></div>
         <div class="rule" id="perfRule" hidden></div>
         <div class="dot cursor" id="perfCursor" hidden></div>
+        <div class="dot end tok" id="perfEndT" style="opacity:0"></div>
+        <div class="dot cursor tok" id="perfCursorT" hidden></div>
         <div class="tip" id="perfTip" hidden></div>
       </div>
       <div class="axis num"><span id="perfFrom"></span><span id="perfTo"></span></div>
@@ -408,7 +422,7 @@
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   /* ── State ─────────────────────────────────────────────── */
-  const DEFAULTS = { view: 'charts', chain: 'all', metric: 'staked', days: 30, type: 'all', flowType: 'all', day: '' };
+  const DEFAULTS = { view: 'charts', chain: 'all', metric: 'staked', days: 30, type: 'all', flowType: 'all', day: '', lines: 'both' };
   const PAGE = 8, MORE = 20;
   const state = { ...DEFAULTS, limit: PAGE };
   let shownView = null;
@@ -422,7 +436,8 @@
     if (key !== 'metric') state.limit = PAGE;
     if (key === 'chain' || key === 'days') state.day = '';
     const changed = Object.keys(DEFAULTS).filter(k => state[k] !== DEFAULTS[k]).map(k => [k, state[k]]);
-    try { history.replaceState(null, '', changed.length ? '#' + new URLSearchParams(changed) : location.pathname + location.search); } catch {}
+    // window.history: `history` below is the snapshot's price history.
+    try { window.history.replaceState(null, '', changed.length ? '#' + new URLSearchParams(changed) : location.pathname + location.search); } catch {}
     render();
   }
   function readHash() {
@@ -482,54 +497,90 @@
   };
 
   /* ── Charts ────────────────────────────────────────────── */
-  let points = [];
+  // Total staked on one network can show two lines on their own scales: value in USD (solid) and stake in
+  // tokens (dashed). Either can be switched off; at least one stays on. Other views show the value line only.
+  let points = [], chartCtx = {};
+  const fmtTokAmount = v => { const a = Math.abs(v);
+    return a >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : a >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : v.toLocaleString('en-US', { maximumFractionDigits: a >= 1000 ? 0 : 2 }); };
   function renderCharts() {
     if (!DATA.daily.length) return;
-    const series = DATA.daily.slice(-state.days).map(d => ({ date: new Date(d.date), v: sum(d[state.metric], state.metric) }));
     const isMoney = state.metric === 'staked';
+    const one = isMoney ? DATA.chains[state.chain] : null;
+    const showValue = !one || state.lines !== 'tokens', showTokens = !!one && state.lines !== 'value';
+    const series = DATA.daily.slice(-state.days).map(d => ({ date: new Date(d.date), v: sum(d[state.metric], state.metric), t: one ? d.tokens?.[one.id] ?? null : null }));
     const fmt = v => isMoney ? compact(v) : usd(v, v < 100 ? 2 : 0);
-    const available = series.filter(p => p.v != null);
-    const first = available[0]?.v, last = available.at(-1)?.v;
+    const fmtTok = v => fmtTokAmount(v) + ' ' + one.token;
+    chartCtx = { one, showValue, showTokens, fmtTok };
+
+    // Headline and % follow the primary line: value when shown, otherwise tokens.
+    const key = showValue ? 'v' : 't', available = series.filter(p => p[key] != null);
+    const first = available[0]?.[key], last = available.at(-1)?.[key];
     const change = first > 0 && available.length > 1 ? (last - first) / first * 100 : null;
-    roll($('perfValue'), last == null ? '—' : fmt(last));
+    roll($('perfValue'), last == null ? '—' : showValue ? fmt(last) : fmtTok(last));
     $('perfPct').textContent = change == null ? '—' : (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
     $('perfDelta').classList.toggle('neg', change != null && change < 0);
-    // Percentage change applies to staked value, not per-day reward estimates.
-    $('perfDelta').hidden = !isMoney;
-    renderTokenChange(isMoney);
+    $('perfDelta').hidden = !isMoney;          // % applies to stake, not per-day reward estimates
+    renderTokenChange(isMoney && showValue);
     $('perfFrom').textContent = day(series[0].date);
     $('perfTo').textContent = day(series.at(-1).date);
 
+    const legend = $('perfLegend');
+    legend.hidden = !one;
+    if (one) {
+      $('legendToken').textContent = one.token;
+      legend.querySelector('[data-line="value"]').setAttribute('aria-pressed', String(showValue));
+      legend.querySelector('[data-line="tokens"]').setAttribute('aria-pressed', String(showTokens));
+    }
+
     const W = 900, H = 300, pad = 24;
-    const vs = available.map(p => p.v), min = vs.length ? Math.min(...vs) : 0, max = vs.length ? Math.max(...vs) : 0, span = (max - min) || 1;
-    const lo = min - span * .3, hi = max + span * .2;
+    const scale = k => {
+      const vs = series.map(p => p[k]).filter(v => v != null);
+      const min = vs.length ? Math.min(...vs) : 0, max = vs.length ? Math.max(...vs) : 0, span = (max - min) || Math.abs(max) * .01 || 1;
+      const lo = min - span * .3, hi = max + span * .2;
+      return v => v == null ? null : H - pad - (v - lo) / (hi - lo) * (H - 2 * pad);
+    };
+    const yV = scale('v'), yT = scale('t');
     points = series.map((p, i) => ({ ...p, x: i / Math.max(1, series.length - 1) * W,
-      y: p.v == null ? null : H - pad - (p.v - lo) / (hi - lo) * (H - 2 * pad) }));
+      y: showValue ? yV(p.v) : yT(p.t), yt: showValue && showTokens ? yT(p.t) : null }));
     const el = $('perfSvg'); el.replaceChildren();
     const g = svg(svg(el, 'defs', {}), 'linearGradient', { id: 'fill', x2: 0, y2: 1 });
     svg(g, 'stop', { 'stop-color': '#111111', 'stop-opacity': .14 });
     svg(g, 'stop', { offset: 1, 'stop-color': '#111111', 'stop-opacity': 0 });
     [.25, .5, .75].forEach(t => svg(el, 'line', { class: 'grid', x1: 0, x2: W, y1: H * t, y2: H * t }));
-    // Break the line at unavailable dates instead of joining or inventing points.
-    let segment = [];
-    const drawSegment = () => {
-      if (!segment.length) return;
-      const d = segment.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join('');
-      const firstP = segment[0], lastP = segment.at(-1);
-      svg(el, 'path', { d: d + `L${lastP.x},${H}L${firstP.x},${H}Z`, fill: 'url(#fill)' });
-      svg(el, 'path', { d, class: 'line' });
-      segment = [];
+    // Break a line at unavailable dates instead of joining or inventing points.
+    const draw = (prop, cls, fill) => {
+      let seg = [];
+      const flush = () => {
+        if (!seg.length) return;
+        const d = seg.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ',' + p[prop].toFixed(1)).join('');
+        if (fill) svg(el, 'path', { d: d + `L${seg.at(-1).x},${H}L${seg[0].x},${H}Z`, fill: 'url(#fill)', class: 'area' });
+        svg(el, 'path', { d, class: cls });
+        seg = [];
+      };
+      for (const p of points) { if (p[prop] == null) flush(); else seg.push(p); }
+      flush();
     };
-    for (const p of points) { if (p.y == null) drawSegment(); else segment.push(p); }
-    drawSegment();
-    const end = $('perfEnd');
-    const latestPoint = points.filter(p => p.y != null).at(-1);
-    end.style.cssText = latestPoint ? `left:${latestPoint.x / W * 100}%;top:${latestPoint.y / H * 100}%;opacity:0` : 'opacity:0';
-    if (latestPoint) setTimeout(() => end.style.opacity = 1, reduced ? 0 : 1000);
+    draw('y', showValue ? 'line' : 'line tokens', true);
+    if (showValue && showTokens) draw('yt', 'line tokens', false);
+    const place = (node, prop) => {
+      const lp = points.filter(p => p[prop] != null).at(-1);
+      node.style.cssText = lp ? `left:${lp.x / W * 100}%;top:${lp[prop] / H * 100}%;opacity:0` : 'opacity:0';
+      if (lp) setTimeout(() => node.style.opacity = 1, reduced ? 0 : 1000);
+    };
+    place($('perfEnd'), 'y');
+    place($('perfEndT'), 'yt');
+    $('perfEnd').classList.toggle('tok', !showValue);
     $('perfUnit').hidden = isMoney;   // rewards are daily figures
-    $('perfPlot').setAttribute('aria-label', `${last == null ? 'Reward data unavailable' : fmt(last)}${isMoney ? '' : ' per day'}, ${change == null ? 'change unavailable' : change.toFixed(2) + '% change'} over ${state.days} days. Arrow keys inspect each day.`);
+    $('perfPlot').setAttribute('aria-label', `${last == null ? 'Data unavailable' : showValue ? fmt(last) : fmtTok(last)}${isMoney ? '' : ' per day'}, ${change == null ? 'change unavailable' : change.toFixed(2) + '% change'} over ${state.days} days. Arrow keys inspect each day.`);
     inspect(null);
   }
+  $('perfLegend').addEventListener('click', e => {
+    const b = e.target.closest('[data-line]'); if (!b) return;
+    const on = { value: state.lines !== 'tokens', tokens: state.lines !== 'value' };
+    on[b.dataset.line] = !on[b.dataset.line];
+    if (!on.value && !on.tokens) on[b.dataset.line === 'value' ? 'tokens' : 'value'] = true;   // keep one line
+    set('lines', on.value && on.tokens ? 'both' : on.value ? 'value' : 'tokens');
+  });
   // Stake change over the selected period in each network's own token ("+5,637 ATOM"), next to the % change.
   const fmtTokens = v => {
     const a = Math.abs(v);
@@ -550,15 +601,20 @@
   }
   let cursor = null;
   function inspect(i) {
-    const parts = ['perfRule', 'perfCursor', 'perfTip'].map($);
+    const parts = ['perfRule', 'perfCursor', 'perfTip'].map($), curT = $('perfCursorT');
     cursor = i;
+    curT.hidden = true;
     if (i == null) return parts.forEach(p => p.hidden = true);
     const p = points[i = cursor = Math.max(0, Math.min(points.length - 1, i))], box = $('perfPlot');
     const x = p.x / 900 * 100, y = p.y == null ? 50 : p.y / 300 * 100;
     parts.forEach(n => n.hidden = false);
     parts[0].style.left = x + '%';
     parts[1].style.cssText = `left:${x}%;top:${y}%`;
-    parts[2].innerHTML = `<small>${day(p.date)}</small>${p.v == null ? 'APR unavailable' : state.metric === 'staked' ? usd(p.v) : usd(p.v, 2) + ' / day'}`;
+    const { one, showValue, showTokens, fmtTok } = chartCtx;
+    const valueText = p.v == null ? (state.metric === 'staked' ? '—' : 'APR unavailable') : state.metric === 'staked' ? usd(p.v) : usd(p.v, 2) + ' / day';
+    const tokText = one && p.t != null ? fmtTok(p.t) : '—';
+    parts[2].innerHTML = `<small>${day(p.date)}</small>` + [showValue ? valueText : '', showTokens ? tokText : ''].filter(Boolean).join('<br>');
+    if (p.yt != null) { curT.hidden = false; curT.style.cssText = `left:${x}%;top:${p.yt / 300 * 100}%`; }
     parts[2].style.left = Math.max(56, Math.min(box.clientWidth - 56, p.x / 900 * box.clientWidth)) + 'px';
     parts[2].style.top = Math.max(44, y / 100 * box.clientHeight) + 'px';
   }

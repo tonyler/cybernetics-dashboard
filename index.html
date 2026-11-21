@@ -346,7 +346,7 @@
       <div class="axis num"><span id="perfFrom"></span><span id="perfTo"></span></div>
       <div class="legend" id="perfLegend" role="group" aria-label="Lines" hidden>
         <button type="button" data-line="value"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3"/></svg>Value</button>
-        <button type="button" data-line="tokens"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3" stroke-dasharray="4 3"/></svg><span class="legend-token"></span></button>
+        <button type="button" data-line="tokens"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3" stroke-dasharray="4 3"/></svg>Tokens</button>
       </div>
     </section>
 
@@ -375,7 +375,7 @@
       <div class="axis num"><span id="flowFrom"></span><span id="flowTo"></span></div>
       <div class="legend" id="flowLegend" role="group" aria-label="Lines" hidden>
         <button type="button" data-line="value"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3"/></svg>Value</button>
-        <button type="button" data-line="tokens"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3" stroke-dasharray="4 3"/></svg><span class="legend-token"></span></button>
+        <button type="button" data-line="tokens"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3" stroke-dasharray="4 3"/></svg>Tokens</button>
       </div>
       <div class="list">
         <div class="seg lead" role="group" aria-label="Inflow transaction type">
@@ -578,7 +578,7 @@
   function syncLegend(legend, one, showValue, showTokens) {
     legend.hidden = !one;
     if (!one) return;
-    legend.querySelector('.legend-token').textContent = one.token;
+    legend.querySelector('[data-line="tokens"]').title = `Amounts in ${one.token}`;
     legend.querySelector('[data-line="value"]').setAttribute('aria-pressed', String(showValue));
     legend.querySelector('[data-line="tokens"]').setAttribute('aria-pressed', String(showTokens));
   }

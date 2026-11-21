@@ -142,12 +142,11 @@
   .dot.cursor { background: #fff; border: 1.5px solid var(--sig); box-shadow: none; }
   .line.tokens { stroke-dasharray: 5 4; }
   .dot.tok { background: var(--bg); border: 1.5px solid var(--sig); box-shadow: none; }
-  .legend { display: flex; gap: 6px; margin-top: 22px; }
+  .legend { display: flex; justify-content: center; gap: 6px; margin-top: 18px; }
   .legend button { display: inline-flex; align-items: center; gap: 8px; padding: 5px 11px; border: 1px solid var(--line-2); border-radius: 999px; font-size: 12px; color: var(--faint); transition: color .2s, border-color .2s, background .2s; }
   .legend button svg { width: 20px; height: 6px; stroke: currentColor; stroke-width: 1.6; }
   .legend button:hover { color: var(--text); }
   .legend [aria-pressed="true"] { color: var(--text); border-color: var(--text); background: var(--raise); }
-  .legend + .plot { margin-top: 14px; }
   .rule { position: absolute; top: 0; bottom: 0; width: 1px; background: repeating-linear-gradient(var(--dim) 0 3px, transparent 3px 7px); pointer-events: none; }
   .tip { position: absolute; transform: translate(-50%, calc(-100% - 14px)); padding: 7px 10px; background: #fff; border: 1px solid var(--line-2); border-radius: 6px; font: 12px var(--mono); white-space: nowrap; pointer-events: none; }
   .tip small { display: block; color: var(--faint); font-size: 11px; margin-bottom: 2px; }
@@ -334,10 +333,6 @@
         </div>
         <div class="seg mono" role="group" aria-label="Period" data-periods></div>
       </div>
-      <div class="legend" id="perfLegend" role="group" aria-label="Lines" hidden>
-        <button type="button" data-line="value"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3"/></svg>Value</button>
-        <button type="button" data-line="tokens"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3" stroke-dasharray="4 3"/></svg><span id="legendToken"></span></button>
-      </div>
       <div class="plot" id="perfPlot" tabindex="0" role="img">
         <svg id="perfSvg" viewBox="0 0 900 300" preserveAspectRatio="none" aria-hidden="true"></svg>
         <div class="scan"></div>
@@ -349,6 +344,10 @@
         <div class="tip" id="perfTip" hidden></div>
       </div>
       <div class="axis num"><span id="perfFrom"></span><span id="perfTo"></span></div>
+      <div class="legend" id="perfLegend" role="group" aria-label="Lines" hidden>
+        <button type="button" data-line="value"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3"/></svg>Value</button>
+        <button type="button" data-line="tokens"><svg viewBox="0 0 20 6" aria-hidden="true"><line x1="0" y1="3" x2="20" y2="3" stroke-dasharray="4 3"/></svg><span id="legendToken"></span></button>
+      </div>
     </section>
 
     <section class="view" data-view="explorer">
